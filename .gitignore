@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.terminal-session.json
+.terminal-session.json.tmp
+*.log
+
+# Claude Code local settings (contains user-specific paths/permissions)
+.claude/settings.local.json
