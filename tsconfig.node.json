@@ -8,5 +8,5 @@
     "esModuleInterop": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "server"]
+  "include": ["vite.config.ts", "server", "shared"]
 }

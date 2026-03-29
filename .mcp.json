@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "orc": {
+      "command": "node_modules/.bin/tsx.cmd",
+      "args": ["server/mcp/index.ts"]
+    }
+  }
+}

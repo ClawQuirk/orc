@@ -4,5 +4,11 @@ dist/
 .terminal-session.json.tmp
 *.log
 
+# Environment (machine-specific ports)
+.env
+
+# Runtime data (database, encrypted vault, browser contexts)
+data/
+
 # Claude Code local settings (contains user-specific paths/permissions)
 .claude/settings.local.json

@@ -2,7 +2,7 @@
   <div class="resize-handle" @mousedown="startResize"></div>
   <div class="terminal-header">
     <span>Terminal</span>
-    <button class="close-btn" @click="close">Close</button>
+    <button class="close-btn" @click="close">Close Terminal</button>
   </div>
   <div ref="terminalRef" class="terminal-container"></div>
 </template>
@@ -21,6 +21,7 @@ let fitAddon: FitAddon | null = null;
 let ws: WebSocket | null = null;
 let isOpen = false;
 let initialized = false;
+let inputLocked = false;
 
 const DEFAULT_WIDTH = 480;
 const MIN_WIDTH = 300;
@@ -151,6 +152,8 @@ function initTerminal() {
   term.open(terminalRef.value);
 
   term.onData((data: string) => {
+    // SECURITY: Block all keyboard input when vault is locked
+    if (inputLocked) return;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'input', data }));
     }
@@ -253,6 +256,21 @@ onMounted(() => {
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'switch-shell', shell: shell || undefined }));
     }
+  });
+
+  // SECURITY: Lock/unlock terminal input during vault lock
+  eventBus.on('terminal:lock', () => {
+    inputLocked = true;
+    // Blur the terminal so it cannot capture keystrokes
+    term?.blur();
+    // Also blur the underlying textarea that xterm.js uses for input
+    const textarea = document.querySelector('#vue-terminal textarea');
+    if (textarea instanceof HTMLElement) textarea.blur();
+  });
+
+  eventBus.on('terminal:unlock', () => {
+    inputLocked = false;
+    // Do NOT auto-focus — let the user click into the terminal intentionally
   });
 
   // Restore panel state from previous session

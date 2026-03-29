@@ -19,6 +19,7 @@ export class PtyManager {
   private saveTimer: ReturnType<typeof setInterval> | null = null;
   private commandLaunched = false;
   private currentShell: string;
+  private outputObservers = new Set<(data: string) => void>();
 
   constructor() {
     this.currentShell = getDefaultShell().command;
@@ -62,6 +63,10 @@ export class PtyManager {
         if (client.readyState === 1) {
           client.send(msg);
         }
+      }
+      // Notify output observers (ChatBridge, etc.)
+      for (const observer of this.outputObservers) {
+        observer(data);
       }
     });
 
@@ -206,6 +211,17 @@ export class PtyManager {
       lastActive: new Date().toISOString(),
     };
     sessionStore.save(data);
+  }
+
+  // --- Public API for ChatBridge ---
+
+  onOutput(observer: (data: string) => void): () => void {
+    this.outputObservers.add(observer);
+    return () => this.outputObservers.delete(observer);
+  }
+
+  writeToStdin(data: string): void {
+    this.ptyProcess?.write(data);
   }
 
   shutdown() {

@@ -9,6 +9,7 @@ export interface ClawQuirkSettings {
   terminalFontSize: number;
   autoLaunchCommand: string;
   terminalPosition: 'right' | 'left';
+  iconBarPosition: 'top' | 'bottom';
   shell: string;
 }
 
@@ -17,6 +18,7 @@ export const DEFAULT_SETTINGS: ClawQuirkSettings = {
   terminalFontSize: 14,
   autoLaunchCommand: 'claude',
   terminalPosition: 'right',
+  iconBarPosition: 'bottom',
   shell: '',
 };
 

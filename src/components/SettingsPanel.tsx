@@ -7,9 +7,10 @@ interface Props {
   onChange: (settings: ClawQuirkSettings) => void;
   onClose: () => void;
   availableShells: ShellInfo[];
+  anchorRect?: DOMRect;
 }
 
-export default function SettingsPanel({ settings, onChange, onClose, availableShells }: Props) {
+export default function SettingsPanel({ settings, onChange, onClose, availableShells, anchorRect }: Props) {
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -30,7 +31,15 @@ export default function SettingsPanel({ settings, onChange, onClose, availableSh
   return (
     <>
       <div className="settings-overlay" onClick={onClose} />
-      <div className="settings-panel" ref={panelRef}>
+      <div
+        className="settings-panel"
+        ref={panelRef}
+        style={anchorRect ? {
+          position: 'fixed',
+          left: anchorRect.right + 8,
+          bottom: window.innerHeight - anchorRect.bottom,
+        } : undefined}
+      >
         <h3>Settings</h3>
 
         <div className="setting-row">
