@@ -2640,3 +2640,59 @@ html, body {
   font-size: 0.8rem;
   margin-bottom: 0.5rem;
 }
+
+/* Shopping Setup */
+.shopping-empty {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--text-muted);
+}
+
+.shopping-empty p {
+  margin: 0.25rem 0;
+}
+
+.shopping-services {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.shopping-service-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.shopping-service-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.shopping-service-name {
+  font-weight: 500;
+  font-size: 0.85rem;
+  text-transform: capitalize;
+}
+
+.shopping-last-used {
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.browser-login-status.pending {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

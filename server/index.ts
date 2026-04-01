@@ -26,9 +26,12 @@ import { CoinbasePlugin } from './plugins/coinbase/index.js';
 import { RobinhoodPlugin } from './plugins/robinhood/index.js';
 import { PlaidPlugin } from './plugins/plaid/index.js';
 import { FinancialOverviewPlugin } from './plugins/financial/index.js';
+import { SproutsPlugin } from './plugins/sprouts/index.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerJournalRoutes } from './routes/journal.js';
 import { registerFinancialRoutes } from './routes/financial.js';
+import { registerAutomationRoutes } from './routes/automation.js';
+import { browserManager } from './automation/browser-manager.js';
 import { backupKeyToDrive, restoreKeyFromDrive, hasKeyBackup, backupDbToDrive, getDbBackupInfo, restoreDbFromDrive } from './plugins/google/drive-key-backup.js';
 
 const PORT = parseInt(process.env.BACKEND_PORT || '3001', 10);
@@ -61,6 +64,7 @@ const coinbasePlugin = new CoinbasePlugin();
 const robinhoodPlugin = new RobinhoodPlugin();
 const plaidPlugin = new PlaidPlugin();
 const financialOverviewPlugin = new FinancialOverviewPlugin();
+const sproutsPlugin = new SproutsPlugin();
 
 // --- Phase 2: Called after vault unlock — initializes DB and registers plugins ---
 let dbInitialized = false;
@@ -105,6 +109,7 @@ function onVaultUnlocked(): void {
   pluginLoader.register(robinhoodPlugin, pluginDeps);
   pluginLoader.register(plaidPlugin, pluginDeps);
   pluginLoader.register(financialOverviewPlugin, pluginDeps);
+  pluginLoader.register(sproutsPlugin, pluginDeps);
 
   dbInitialized = true;
   console.log('[server] Database and plugins initialized');
@@ -538,6 +543,9 @@ registerJournalRoutes(router);
 // --- Project API (routes use getDatabase() per-request) ---
 registerProjectRoutes(router);
 
+// --- Browser Automation API ---
+registerAutomationRoutes(router, vault);
+
 // --- Plugin API ---
 router.get('/api/plugins', (_req, res) => {
   const plugins = pluginLoader.getAllPlugins().map((p) => ({
@@ -732,6 +740,7 @@ wss.on('connection', (ws) => {
 
 // --- Shutdown ---
 async function shutdown() {
+  await browserManager.shutdown();
   await pluginLoader.shutdownAll();
   ptyManager.shutdown();
   closeDatabase();

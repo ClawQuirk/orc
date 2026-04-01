@@ -14,7 +14,7 @@ export interface PluginManifest {
     | 'social'
     | 'automation';
   requiresAuth: boolean;
-  authType?: 'oauth2' | 'api-key' | 'none';
+  authType?: 'oauth2' | 'api-key' | 'browser' | 'none';
   /** Shared prefix for all tool names (e.g., 'gmail', 'calendar'). Used for MCP permission rules. */
   toolPrefix?: string;
   /** Connection group this plugin belongs to (e.g., 'google', 'slack'). Plugins sharing a connection share auth. */

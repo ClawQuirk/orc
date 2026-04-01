@@ -242,6 +242,29 @@ Five financial service integrations with security-first design. All credentials 
 
 **Normalization** in `server/plugins/financial/normalize.ts`: `toCents()`, `fromCents()`, `normalizeCategory()`, `normalizeMerchant()`, `maskAccountNumber()`, `sanitizeForLog()`.
 
+## Browser Automation
+
+Playwright-based browser automation framework in `server/automation/` for shopping plugins (Phase 3B). Uses persistent browser contexts so logins survive restarts.
+
+**Core modules:**
+- `browser-manager.ts` — Singleton `BrowserManager`. Lazy Chromium launch, persistent contexts at `data/browser-contexts/{service}/`, headed mode for login + headless for scraping, 5-minute idle timeout, one headed session at a time.
+- `page-helpers.ts` — Stateless utilities: `waitForLogin()`, `extractTable()`, `retryWithBackoff()`, `screenshotOnFailure()`, `humanDelay()`, `safeClick()`, `safeNavigate()`.
+- `service-registry.ts` — Config registry. Phase 3B plugins call `serviceRegistry.register()` with their login URL and detection strategy.
+- `types.ts` — `LoginDetectionStrategy` (url/cookie/element), `ServiceBrowserConfig`, `BrowserSessionInfo`, `AutomationResult`.
+
+**Login flow:** User clicks "Log in" in the Shopping panel → backend opens headed Chromium to the login URL → user logs in manually (Orc never captures passwords) → framework detects success via URL/cookie/element check → saves context to disk → subsequent tool calls use headless mode with saved cookies.
+
+**API endpoints** in `server/routes/automation.ts`:
+- `GET /api/automation/status` — All session statuses
+- `GET /api/automation/status/:service` — Single service status
+- `POST /api/automation/login/:service` — Open headed browser for manual login (returns 202, frontend polls)
+- `POST /api/automation/logout/:service` — Clear browser context
+- `GET /api/automation/screenshot/:service` — Latest debug screenshot
+
+**Frontend:** `ShoppingSetup.tsx` popover panel with login/logout buttons per service, status polling during login flow. Accessed via Shopping button in sidebar Connections section.
+
+**Dependency:** `playwright` npm package + `npx playwright install chromium` (~400MB). Chromium is only launched on first automation API call (lazy init).
+
 ## Projects
 
 Full project management with Epic/Task hierarchy. Data stored in SQLite (structured queries) + auto-generated markdown at `data/projects/{id}.md` (for LLM context).

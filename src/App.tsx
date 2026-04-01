@@ -9,6 +9,7 @@ import Dashboard from './components/Dashboard';
 import PlanningPage from './components/PlanningPage';
 import ProjectsPage from './components/ProjectsPage';
 import ActionsPage from './components/ActionsPage';
+import ShoppingPage from './components/ShoppingPage';
 import PeoplePage from './components/PeoplePage';
 import DocsPage from './components/DocsPage';
 import MemoryPage from './components/MemoryPage';
@@ -18,6 +19,7 @@ import SystemPage from './components/SystemPage';
 import VaultUnlock from './components/VaultUnlock';
 import GoogleAuthSetup from './components/GoogleAuthSetup';
 import FinancialSetup from './components/FinancialSetup';
+import ShoppingSetup from './components/ShoppingSetup';
 
 interface VaultStatus {
   exists: boolean;
@@ -37,6 +39,7 @@ export default function App() {
   const [activePage, setActivePage] = useState<PageId>('dashboard');
   const [googleAuthOpen, setGoogleAuthOpen] = useState(false);
   const [financialSetupOpen, setFinancialSetupOpen] = useState(false);
+  const [shoppingSetupOpen, setShoppingSetupOpen] = useState(false);
   const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null);
   const [settings, setSettings] = useState(getSettings);
   const [availableShells, setAvailableShells] = useState<ShellInfo[]>([]);
@@ -195,6 +198,7 @@ export default function App() {
       <Sidebar
         onOpenGoogleAuth={() => setGoogleAuthOpen(true)}
         onOpenFinancialSetup={() => setFinancialSetupOpen(true)}
+        onOpenShoppingSetup={() => setShoppingSetupOpen(true)}
         onToggleTheme={toggleTheme}
         onOpenFolder={openProjectFolder}
         onLockVault={handleLockVault}
@@ -222,6 +226,7 @@ export default function App() {
         {activePage === 'projects' && <ProjectsPage />}
         {activePage === 'planning' && <PlanningPage />}
         {activePage === 'actions' && <ActionsPage />}
+        {activePage === 'shopping' && <ShoppingPage />}
         {activePage === 'people' && <PeoplePage />}
         {activePage === 'docs' && <DocsPage />}
         {activePage === 'memory' && <MemoryPage />}
@@ -246,6 +251,10 @@ export default function App() {
 
       {financialSetupOpen && (
         <FinancialSetup onClose={() => setFinancialSetupOpen(false)} />
+      )}
+
+      {shoppingSetupOpen && (
+        <ShoppingSetup onClose={() => setShoppingSetupOpen(false)} />
       )}
     </div>
   );
