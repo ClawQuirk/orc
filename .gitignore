@@ -12,3 +12,6 @@ data/
 
 # Claude Code local settings (contains user-specific paths/permissions)
 .claude/settings.local.json
+
+# Implementation plans (internal only)
+plans/
