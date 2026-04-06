@@ -22,7 +22,8 @@ export function registerProjectRoutes(router: Router): void {
     const projects = (rows as any[]).map((p) => {
       const epicCount = (db().prepare('SELECT COUNT(*) as c FROM epics WHERE project_id = ?').get(p.id) as any).c;
       const taskCount = (db().prepare('SELECT COUNT(*) as c FROM tasks WHERE project_id = ?').get(p.id) as any).c;
-      return { ...p, google_links: JSON.parse(p.google_links || '[]'), epicCount, taskCount };
+      const doneCount = (db().prepare("SELECT COUNT(*) as c FROM tasks WHERE project_id = ? AND status = 'done'").get(p.id) as any).c;
+      return { ...p, google_links: JSON.parse(p.google_links || '[]'), epicCount, taskCount, doneCount };
     });
     sendJson(res, 200, { projects });
   });

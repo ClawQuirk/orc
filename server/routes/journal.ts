@@ -48,8 +48,12 @@ export function registerJournalRoutes(router: Router): void {
 
     let entries = db().prepare(sql).all(...binds) as any[];
 
-    // Parse tags JSON and filter by tag if needed
-    entries = entries.map((e) => ({ ...e, tags: JSON.parse(e.tags || '[]') }));
+    // Parse tags JSON and filter by tag if needed (handle double-encoded strings)
+    entries = entries.map((e) => {
+      let tags = JSON.parse(e.tags || '[]');
+      if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch {} }
+      return { ...e, tags: Array.isArray(tags) ? tags : [] };
+    });
     if (tag) {
       entries = entries.filter((e) => e.tags.includes(tag));
     }

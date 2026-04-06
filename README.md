@@ -14,6 +14,10 @@ Built on [ClawQuirk Canvas](https://github.com/ClawQuirk/clawquirk-canvas).
 
 **Journal** -- FTS5 full-text search with tiered context (index, summaries, full content) to manage LLM context windows
 
+**Brainstorm** -- ReactFlow infinite canvas for visual concept mapping with tabbed boards, rich-text nodes, color coding, resize, copy/paste, and 12 MCP tools for LLM-driven brainstorming
+
+**Shopping** -- Cross-merchant price comparison across Sprouts, Costco, Target, Amazon, and Newegg with purchase learning (9 MCP tools)
+
 **Dashboard** -- Pinnable widget grid with Gmail, Calendar, and Contacts widgets
 
 **Security** -- AES-256-GCM encrypted credential vault, 127.0.0.1-only binding, CORS/Origin validation, vault brute-force protection
@@ -24,7 +28,7 @@ Built on [ClawQuirk Canvas](https://github.com/ClawQuirk/clawquirk-canvas).
 
 Two services run concurrently:
 
-- **Vite frontend (React + Vue)** -- React main panel with sidebar navigation and 10 orchestration pages. Vue terminal panel runs your AI tool of choice (Claude, Aider, Ollama, etc.)
+- **Vite frontend (React + Vue)** -- React main panel with sidebar navigation and 11 orchestration pages. Vue terminal panel runs your AI tool of choice (Claude, Aider, Ollama, etc.)
 - **Node.js backend** -- PTY manager, SQLite database (WAL mode), encrypted vault, plugin system, MCP server, and API routes
 
 The terminal _is_ the chat interface -- there is no separate chat panel. It persists across browser refreshes and server restarts.
@@ -35,6 +39,7 @@ The terminal _is_ the chat interface -- there is no separate chat panel. It pers
 
 - Node.js 18+
 - Native compilation tools for `node-pty` (VS Build Tools on Windows, Xcode CLI on macOS)
+- Chromium (auto-installed via `npx playwright install chromium` for shopping automation)
 
 ### Install and Run
 
@@ -89,7 +94,8 @@ Plugins live in `server/plugins/` and expose tools via MCP. Each plugin declares
 | Coinbase | Coinbase | 4 |
 | Robinhood | Robinhood | 3 |
 | Plaid | Plaid | 4 |
-| Local | Financial Overview, Projects, Journal | 17 |
+| Sprouts, Costco, Target, Amazon, Newegg | Shopping merchants | 5 |
+| Local | Financial Overview, Projects, Journal, Shopping Aggregate, Shopping Learning, Brainstorm | 32 |
 
 ## Security
 

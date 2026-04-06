@@ -4,6 +4,12 @@ import remarkGfm from 'remark-gfm';
 import { journalApi } from '../lib/journal-api';
 import type { JournalIndex, JournalEntry, DateCount } from '../lib/journal-api';
 
+function parseTags(tags: unknown): string[] {
+  if (Array.isArray(tags)) return tags;
+  if (typeof tags === 'string') { try { const p = JSON.parse(tags); return Array.isArray(p) ? p : []; } catch { return []; } }
+  return [];
+}
+
 export default function MemoryPage() {
   const [dates, setDates] = useState<DateCount[]>([]);
   const [entries, setEntries] = useState<JournalIndex[]>([]);
@@ -112,7 +118,7 @@ export default function MemoryPage() {
                       {item.source !== 'manual' && (
                         <span className={`journal-source-badge source-${item.source}`}>{item.source}</span>
                       )}
-                      {item.tags.map((tag) => (
+                      {parseTags(item.tags).map((tag: string) => (
                         <span key={tag} className="journal-tag">{tag}</span>
                       ))}
                     </div>

@@ -6,7 +6,7 @@ interface GoogleStatus {
   scopes: string[];
 }
 
-export type PageId = 'dashboard' | 'projects' | 'planning' | 'actions' | 'shopping' | 'people' | 'docs' | 'memory' | 'knowledge' | 'agents' | 'system';
+export type PageId = 'dashboard' | 'projects' | 'planning' | 'actions' | 'shopping' | 'people' | 'docs' | 'memory' | 'brainstorm' | 'knowledge' | 'agents' | 'system';
 
 interface SidebarProps {
   onOpenGoogleAuth: () => void;
@@ -159,6 +159,14 @@ export default function Sidebar({
             <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
           </svg>
           <span>Memory</span>
+        </button>
+        {/* Brainstorm — mind map */}
+        <button className={`sidebar-item ${activePage === 'brainstorm' ? 'active' : ''}`} onClick={() => onNavigate('brainstorm')}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="5" r="3" /><circle cx="5" cy="19" r="3" /><circle cx="19" cy="19" r="3" />
+            <line x1="12" y1="8" x2="5" y2="16" /><line x1="12" y1="8" x2="19" y2="16" />
+          </svg>
+          <span>Brainstorm</span>
         </button>
         {/* Knowledge — book open */}
         <button className={`sidebar-item ${activePage === 'knowledge' ? 'active' : ''}`} onClick={() => onNavigate('knowledge')}>

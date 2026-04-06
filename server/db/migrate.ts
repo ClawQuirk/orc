@@ -11,8 +11,10 @@ import { migration as m001 } from './migrations/001-initial-schema.js';
 import { migration as m002 } from './migrations/002-projects-schema.js';
 import { migration as m003 } from './migrations/003-journal-schema.js';
 import { migration as m004 } from './migrations/004-financial-schema.js';
+import { migration as m005 } from './migrations/005-shopping-schema.js';
+import { migration as m006 } from './migrations/006-brainstorm-schema.js';
 
-const migrations: Migration[] = [m001, m002, m003, m004];
+const migrations: Migration[] = [m001, m002, m003, m004, m005, m006];
 
 export function runMigrations(db: Database.Database): void {
   db.exec(`

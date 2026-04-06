@@ -144,6 +144,11 @@ SQLite database at `data/orc.db` with WAL mode for concurrent access.
 - `financial_transactions` — Normalized transactions (amount_cents INTEGER, category, merchant, transaction_type). UNIQUE(plugin_id, source_transaction_id)
 - `financial_sync_state` — Incremental polling cursors per plugin/account
 
+**Migration 005 (shopping):**
+- `shopping_learning` — Shopping preferences, tips, observations with FTS5 search
+- `shopping_learning_fts` — FTS5 virtual table over title, content, tags with sync triggers
+- `shopping_cache` — Short-TTL result cache for cross-merchant search (UNIQUE query+merchant)
+
 Migrations in `server/db/migrations/`. Run automatically on server start.
 
 ## Credential Vault
@@ -179,6 +184,14 @@ Plugins live in `server/plugins/<name>/` and implement the `ServerPlugin` interf
 - `financial-overview` (toolPrefix: `financial`, connection: `local`) — 4 tools: spending, merchants, net_worth, recent
 - `orc-projects` (toolPrefix: `projects`, connection: `local`) — 7 tools: list, get, create, add_epic, add_task, update_status, recommend
 - `orc-journal` (toolPrefix: `journal`, connection: `local`) — 6 tools: index, recent, read, search, add, summarize_day
+- `sprouts` (toolPrefix: `sprouts`, connection: `sprouts`) — 1 tool: search
+- `costco` (toolPrefix: `costco`, connection: `costco`) — 1 tool: search
+- `target` (toolPrefix: `target`, connection: `target`) — 1 tool: search
+- `amazon` (toolPrefix: `amazon`, connection: `amazon`) — 1 tool: search
+- `newegg` (toolPrefix: `newegg`, connection: `newegg`) — 1 tool: search
+- `shopping-aggregate` (toolPrefix: `shopping`, connection: `local`) — 3 tools: search, list, compare
+- `shopping-learning` (toolPrefix: `shopping`, connection: `local`) — 3 tools: learn, recall, recommend
+- `orc-brainstorm` (toolPrefix: `brainstorm`, connection: `local`) — 12 tools: boards_list, boards_get, boards_create, boards_update, boards_delete, boards_duplicate, nodes_create, nodes_update, nodes_delete, edges_create, edges_delete, edges_list
 
 ## MCP Server
 
@@ -264,6 +277,59 @@ Playwright-based browser automation framework in `server/automation/` for shoppi
 **Frontend:** `ShoppingSetup.tsx` popover panel with login/logout buttons per service, status polling during login flow. Accessed via Shopping button in sidebar Connections section.
 
 **Dependency:** `playwright` npm package + `npx playwright install chromium` (~400MB). Chromium is only launched on first automation API call (lazy init).
+
+## Shopping Plugins
+
+Five merchant plugins in `server/plugins/{merchant}/`, each with `index.ts` (plugin class) + `selectors.ts` (CSS selectors and URLs). All implement `MerchantPlugin` interface from `shared/shopping-types.ts` with a public `searchProducts()` method returning normalized `ProductResult[]`.
+
+**Merchants:**
+- **Sprouts** — Azure B2C SSO, `cu` cookie detection, Instacart-based storefront
+- **Costco** — Standard login, `C_LOC` cookie detection
+- **Target** — Standard login, `accessToken` cookie detection, good `data-test` attributes
+- **Amazon** — Element-based login detection, longer human delays for anti-bot
+- **Newegg** — Element-based login detection, electronics-focused
+
+**Aggregation** (`server/plugins/shopping-aggregate/`): Cross-merchant search via `shopping_search`, `shopping_list`, `shopping_compare` tools. Calls merchant plugins' `searchProducts()` directly (avoids markdown round-trip). 5-minute result cache in `shopping_cache` table.
+
+**Shopping API** in `server/routes/shopping.ts`:
+- `GET /api/shopping/merchants` — Logged-in merchant status
+- `GET /api/shopping/search?q=...` — Single-item cross-merchant search
+- `POST /api/shopping/search-list` — Multi-item search `{ items: string[] }`
+- `GET /api/shopping/learnings?q=...` — Search or list recent learnings
+
+**Frontend:** `ShoppingPage.tsx` with list input, merchant status badges, expandable item cards with comparison tables (sortable by price/unit), cart summary, and learnings section.
+
+## Shopping Learning
+
+Markdown-based learning system at `data/shopping-learning/{category}/` for purchase intelligence. Plugin in `server/plugins/shopping-learning/`.
+
+**Tools:** `shopping_learn` (record), `shopping_recall` (FTS5 search), `shopping_recommend` (match learnings to shopping list items).
+
+**Auto-learning:** The LLM should proactively call `shopping_learn` when:
+- Price comparisons reveal a clear value winner (>20% cheaper per unit)
+- User expresses a brand preference ("we like Fage", "avoid X brand")
+- User mentions quantity/size preferences ("we go through 32oz in a week")
+- A product is searched repeatedly
+
+**Storage:** DB table `shopping_learning` + FTS5 virtual table for search. Markdown files at `data/shopping-learning/{category}/{slug}.md` with YAML frontmatter for LLM file context.
+
+## Brainstorm
+
+ReactFlow-based infinite canvas for visual concept mapping. Multiple tabbed boards with nodes, edges, copy/paste, auto-save, and archive/restore.
+
+**Database** (migration 006): `brainstorm_boards` (id, name, status, sort_order), `brainstorm_nodes` (position, size, JSON data with label/content/color), `brainstorm_edges` (source, target, handles).
+
+**Backend routes** in `server/routes/brainstorm.ts` — 14 endpoints. **IMPORTANT:** Batch routes (`/nodes/batch`, `/edges/batch`) MUST be registered before parameterized routes (`/nodes/:id`, `/edges/:id`) to avoid route shadowing.
+
+**MCP plugin** in `server/plugins/brainstorm/index.ts` — 12 tools for LLM-driven brainstorming.
+
+**Frontend:** `BrainstormPage.tsx` (wrapped in `ReactFlowProvider`), `BrainstormNode.tsx` (custom node with inline editing, NodeResizer, markdown rendering), `BrainstormTabs.tsx` (tab bar with context menu, archive). API client in `src/lib/brainstorm-api.ts`.
+
+**Node editing:** Double-click to edit, click-away to save (detected via `selected` prop deselection + document mousedown capture phase). Transparent borderless inputs match display styling.
+
+## Page Persistence
+
+Active page is saved to `localStorage` key `orc-active-page` and restored on refresh. Set in the `onNavigate` callback in `App.tsx`.
 
 ## Projects
 

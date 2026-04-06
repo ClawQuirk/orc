@@ -52,6 +52,7 @@ export interface Project {
   updated_at: string;
   epicCount?: number;
   taskCount?: number;
+  doneCount?: number;
 }
 
 export interface ProjectDetail extends Project {

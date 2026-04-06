@@ -1,8 +1,9 @@
 import type { ServerPlugin, PluginDependencies, ToolResult } from '../base-plugin.js';
 import type { PluginManifest, PluginToolDefinition } from '../../../shared/plugin-types.js';
+import type { ProductResult, MerchantPlugin } from '../../../shared/shopping-types.js';
 import { serviceRegistry } from '../../automation/service-registry.js';
 import { browserManager } from '../../automation/browser-manager.js';
-import { safeNavigate, humanDelay, screenshotOnFailure, retryWithBackoff } from '../../automation/page-helpers.js';
+import { safeNavigate, humanDelay, retryWithBackoff } from '../../automation/page-helpers.js';
 import { SELECTORS, URLS } from './selectors.js';
 
 // Register browser config for Sprouts login flow
@@ -17,8 +18,8 @@ serviceRegistry.register({
 const manifest: PluginManifest = {
   id: 'sprouts',
   name: 'Sprouts',
-  description: 'Browse Sprouts Farmers Market weekly deals and search products',
-  version: '0.1.0',
+  description: 'Search Sprouts Farmers Market products with pricing and availability',
+  version: '0.2.0',
   icon: 'shopping-cart',
   category: 'shopping',
   requiresAuth: false,
@@ -29,22 +30,12 @@ const manifest: PluginManifest = {
 
 const tools: PluginToolDefinition[] = [
   {
-    name: 'sprouts_deals',
-    description: 'Get current Sprouts weekly deals. Returns product names, prices, and sale info.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        maxResults: { type: 'number', description: 'Max deals to return (default 20)' },
-      },
-    },
-  },
-  {
     name: 'sprouts_search',
-    description: 'Search Sprouts products by name or keyword.',
+    description: 'Search Sprouts products by name or keyword. Returns structured product data including brand, price, size, price-per-unit, and availability.',
     inputSchema: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'Search query (e.g., "organic avocado")' },
+        query: { type: 'string', description: 'Search query (e.g., "organic greek yogurt")' },
         maxResults: { type: 'number', description: 'Max results (default 10)' },
       },
       required: ['query'],
@@ -52,9 +43,22 @@ const tools: PluginToolDefinition[] = [
   },
 ];
 
-export class SproutsPlugin implements ServerPlugin {
+/** Parse a price string like "$5.49" or "$549" into integer cents. */
+function parsePriceCents(raw: string): number {
+  // Handle "$599" format (Instacart compact) vs "$5.99"
+  const cleaned = raw.replace(/[^0-9.]/g, '');
+  if (cleaned.includes('.')) {
+    return Math.round(parseFloat(cleaned) * 100);
+  }
+  // No decimal — could be cents already (e.g., "599" = $5.99)
+  const val = parseInt(cleaned, 10);
+  return isNaN(val) ? 0 : val;
+}
+
+export class SproutsPlugin implements ServerPlugin, MerchantPlugin {
   manifest = manifest;
   tools = tools;
+  readonly merchantId = 'sprouts' as const;
 
   async initialize(deps: PluginDependencies): Promise<void> {
     deps.logger('Sprouts plugin initialized');
@@ -63,13 +67,13 @@ export class SproutsPlugin implements ServerPlugin {
   async executeTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
     try {
       switch (toolName) {
-        case 'sprouts_deals':
-          return await this.getWeeklyDeals((args.maxResults as number) ?? 20);
-        case 'sprouts_search':
-          return await this.searchProducts(
+        case 'sprouts_search': {
+          const results = await this.searchProducts(
             args.query as string,
             (args.maxResults as number) ?? 10,
           );
+          return this.formatResults(args.query as string, results);
+        }
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${toolName}` }], isError: true };
       }
@@ -86,136 +90,151 @@ export class SproutsPlugin implements ServerPlugin {
 
   async shutdown(): Promise<void> {}
 
-  private async getWeeklyDeals(maxResults: number): Promise<ToolResult> {
-    const page = await browserManager.getPage('sprouts');
-    try {
-      const ok = await safeNavigate(page, URLS.weeklyAd, { waitUntil: 'networkidle' });
-      if (!ok) {
-        return { content: [{ type: 'text', text: 'Failed to load Sprouts weekly ad page.' }], isError: true };
-      }
-      await humanDelay(1000, 2000);
-
-      // Try to extract deal items from the flyer page
-      const deals = await retryWithBackoff(async () => {
-        return await page.evaluate((sel) => {
-          const items: { name: string; price: string; detail: string }[] = [];
-
-          // Strategy 1: Look for flyer items
-          const flyerItems = document.querySelectorAll(sel.flyerItem);
-          if (flyerItems.length > 0) {
-            flyerItems.forEach((item) => {
-              const name = item.querySelector(sel.flyerItemName)?.textContent?.trim() ?? '';
-              const price = item.querySelector(sel.flyerItemPrice)?.textContent?.trim() ?? '';
-              const size = item.querySelector(sel.flyerItemSize)?.textContent?.trim() ?? '';
-              if (name) items.push({ name, price, detail: size });
-            });
-            return items;
-          }
-
-          // Strategy 2: Broader search for product-like elements with prices
-          const allCards = document.querySelectorAll('[class*="card"], [class*="Card"], [class*="product"], [class*="Product"], [class*="item"], [class*="Item"]');
-          allCards.forEach((card) => {
-            const nameEl = card.querySelector('h2, h3, h4, [class*="name"], [class*="Name"], [class*="title"], [class*="Title"]');
-            const priceEl = card.querySelector('[class*="price"], [class*="Price"]');
-            const name = nameEl?.textContent?.trim() ?? '';
-            const price = priceEl?.textContent?.trim() ?? '';
-            if (name && price && name.length < 100) {
-              items.push({ name, price, detail: '' });
-            }
-          });
-          return items;
-        }, SELECTORS);
-      }, { maxRetries: 2 });
-
-      await page.close();
-
-      if (deals.length === 0) {
-        // Take a screenshot for debugging
-        const page2 = await browserManager.getPage('sprouts');
-        await safeNavigate(page2, URLS.weeklyAd, { waitUntil: 'networkidle' });
-        await humanDelay();
-        const screenshot = await screenshotOnFailure(page2, 'sprouts', 'weekly-deals');
-        await page2.close();
-        return {
-          content: [{ type: 'text', text: `No deals found on the weekly ad page. The page layout may have changed. Debug screenshot saved: ${screenshot}` }],
-          isError: true,
-        };
-      }
-
-      const limited = deals.slice(0, maxResults);
-      const lines = ['**Sprouts Weekly Deals**', ''];
-      for (const deal of limited) {
-        const detail = deal.detail ? ` (${deal.detail})` : '';
-        lines.push(`- **${deal.name}** — ${deal.price}${detail}`);
-      }
-      lines.push('', `Showing ${limited.length} of ${deals.length} deals`);
-
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
-    } catch (err: any) {
-      try { await page.close(); } catch { /* ignore */ }
-      throw err;
-    }
-  }
-
-  private async searchProducts(query: string, maxResults: number): Promise<ToolResult> {
+  /** Public structured search — used by aggregation plugin directly. */
+  async searchProducts(query: string, maxResults: number): Promise<ProductResult[]> {
     const page = await browserManager.getPage('sprouts');
     try {
       const searchUrl = URLS.search(query);
-      const ok = await safeNavigate(page, searchUrl, { waitUntil: 'networkidle' });
-      if (!ok) {
-        return { content: [{ type: 'text', text: `Failed to load search results for "${query}".` }], isError: true };
-      }
-      await humanDelay(1000, 2000);
+      const ok = await safeNavigate(page, searchUrl, { waitUntil: 'domcontentloaded' });
+      if (!ok) return [];
+      // Wait for Instacart SPA to render products
+      await humanDelay(4000, 6000);
 
-      const products = await retryWithBackoff(async () => {
-        return await page.evaluate((sel) => {
-          const items: { name: string; price: string; unit: string }[] = [];
-          const cards = document.querySelectorAll(sel.searchResultItem);
+      const rawProducts = await retryWithBackoff(async () => {
+        return await page.evaluate((cardSelector: string) => {
+          const cards = document.querySelectorAll(cardSelector);
+          const items: {
+            name: string; brand: string; priceCents: number; size: string;
+            imageUrl: string; url: string;
+          }[] = [];
 
-          if (cards.length > 0) {
-            cards.forEach((card) => {
-              const name = card.querySelector(sel.productName)?.textContent?.trim() ?? '';
-              const price = card.querySelector(sel.productPrice)?.textContent?.trim() ?? '';
-              const unit = card.querySelector(sel.productUnit)?.textContent?.trim() ?? '';
-              if (name) items.push({ name, price, unit });
-            });
-            return items;
-          }
+          cards.forEach((card) => {
+            const text = card.innerText || '';
+            const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-          // Fallback: broader product detection
-          const allCards = document.querySelectorAll('[class*="product"], [class*="Product"], [class*="item-card"], [class*="ItemCard"]');
-          allCards.forEach((card) => {
-            const nameEl = card.querySelector('h2, h3, h4, [class*="name"], [class*="Name"], [class*="title"], [class*="Title"]');
-            const priceEl = card.querySelector('[class*="price"], [class*="Price"]');
-            const name = nameEl?.textContent?.trim() ?? '';
-            const price = priceEl?.textContent?.trim() ?? '';
-            if (name && name.length < 100) {
-              items.push({ name, price, unit: '' });
+            // Instacart card text pattern:
+            // "Brand Name", "Current price: $X.XX", "$XXX", ["Original Price: $Y.YY", "$YYY"],
+            // "Product Name", "★★★★★", "★★★★★", "(reviews)", "Size"
+            if (lines.length < 3) return;
+
+            let brand = '';
+            let priceStr = '';
+            let name = '';
+            let size = '';
+
+            // First line is usually the brand
+            if (!lines[0].startsWith('$') && !lines[0].startsWith('Current')) {
+              brand = lines[0];
+            }
+
+            // Find the first "Current price:" line for the price
+            for (const line of lines) {
+              if (line.startsWith('Current price:')) {
+                priceStr = line.replace('Current price:', '').trim();
+                break;
+              }
+            }
+            // Fallback: find first line starting with $
+            if (!priceStr) {
+              for (const line of lines) {
+                if (/^\$\d/.test(line) && line.includes('.')) {
+                  priceStr = line;
+                  break;
+                }
+              }
+            }
+
+            // Product name: the longest line that's not a price, brand, stars, or size
+            const nameCandidate = lines.find(l =>
+              l !== brand &&
+              !l.startsWith('$') &&
+              !l.startsWith('Current') &&
+              !l.startsWith('Original') &&
+              !l.includes('★') &&
+              !/^\(\d+\)$/.test(l) &&
+              l.length > 5
+            );
+            name = nameCandidate || '';
+
+            // Size: last line that looks like a measurement (e.g., "32 oz", "5.3 oz", "6 ct")
+            for (let i = lines.length - 1; i >= 0; i--) {
+              if (/\d+(\.\d+)?\s*(oz|lb|ct|gal|fl\s*oz|ml|l|kg|g|pack|count)\b/i.test(lines[i])) {
+                size = lines[i];
+                break;
+              }
+            }
+
+            // Image
+            const imgEl = card.querySelector('[data-testid="item-card-image"]') as HTMLImageElement | null;
+            const imageUrl = imgEl?.src || imgEl?.srcset?.split(',')[0]?.trim().split(' ')[0] || '';
+
+            // Link
+            const linkEl = card.querySelector('a[role="button"], a[href*="/store/"]') as HTMLAnchorElement | null;
+            const url = linkEl?.href || '';
+
+            // Parse price
+            const priceMatch = priceStr.match(/\$?([\d.]+)/);
+            const priceCents = priceMatch ? Math.round(parseFloat(priceMatch[1]) * 100) : 0;
+
+            if (name && priceCents > 0) {
+              items.push({ name, brand, priceCents, size, imageUrl, url });
             }
           });
+
           return items;
-        }, SELECTORS);
+        }, SELECTORS.searchResultItem);
       }, { maxRetries: 2 });
 
       await page.close();
 
-      if (products.length === 0) {
-        return { content: [{ type: 'text', text: `No products found for "${query}".` }] };
-      }
+      return rawProducts.slice(0, maxResults).map((p) => {
+        // Parse unit price from size
+        const unitInfo = parseSize(p.size);
+        const pricePerUnit = unitInfo.amount > 0 ? Math.round(p.priceCents / unitInfo.amount) : 0;
 
-      const limited = products.slice(0, maxResults);
-      const lines = [`**Sprouts Search: "${query}"**`, ''];
-      for (const p of limited) {
-        const unit = p.unit ? ` (${p.unit})` : '';
-        const price = p.price ? ` — ${p.price}` : '';
-        lines.push(`- **${p.name}**${price}${unit}`);
-      }
-      lines.push('', `Showing ${limited.length} of ${products.length} results`);
-
-      return { content: [{ type: 'text', text: lines.join('\n') }] };
+        return {
+          merchant: 'sprouts' as const,
+          name: p.name,
+          brand: p.brand,
+          priceCents: p.priceCents,
+          quantity: p.size,
+          pricePerUnitCents: pricePerUnit,
+          unit: (unitInfo.unit || 'each') as ProductResult['unit'],
+          url: p.url ? new URL(p.url, URLS.base).href : '',
+          imageUrl: p.imageUrl,
+          inStock: true,
+          deliveryAvailable: true,
+          deliveryEstimate: 'Same day',
+        };
+      });
     } catch (err: any) {
       try { await page.close(); } catch { /* ignore */ }
       throw err;
     }
   }
+
+  private formatResults(query: string, results: ProductResult[]): ToolResult {
+    if (results.length === 0) {
+      return { content: [{ type: 'text', text: `No products found for "${query}".` }] };
+    }
+    const lines = [`**Sprouts Search: "${query}"**`, ''];
+    for (const p of results) {
+      const price = p.priceCents ? ` — $${(p.priceCents / 100).toFixed(2)}` : '';
+      const unit = p.pricePerUnitCents ? ` ($${(p.pricePerUnitCents / 100).toFixed(2)}/${p.unit})` : '';
+      const brand = p.brand ? ` [${p.brand}]` : '';
+      const qty = p.quantity ? ` ${p.quantity}` : '';
+      lines.push(`- **${p.name}**${brand}${price}${unit}${qty}`);
+    }
+    lines.push('', `${results.length} results`);
+    return { content: [{ type: 'text', text: lines.join('\n') }] };
+  }
+}
+
+/** Parse a size string like "32 oz" or "6 ct" into amount and unit. */
+function parseSize(size: string): { amount: number; unit: string } {
+  const match = size.match(/([\d.]+)\s*(oz|fl\s*oz|lb|ct|gal|ml|l|kg|g|pack|count|each)/i);
+  if (match) {
+    return { amount: parseFloat(match[1]), unit: match[2].toLowerCase().replace(/\s+/g, ' ') };
+  }
+  return { amount: 0, unit: 'each' };
 }

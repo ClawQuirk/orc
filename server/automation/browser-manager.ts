@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, readdirSync } from 'node:fs';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import type { ServiceBrowserConfig, BrowserSessionInfo, AutomationResult } from './types.js';
 import { waitForLogin } from './page-helpers.js';
+import { serviceRegistry } from './service-registry.js';
 
 const CONTEXT_ROOT = path.join(process.cwd(), 'data', 'browser-contexts');
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
@@ -100,9 +101,12 @@ class BrowserManager {
         // Don't close the headed session — let it finish. Create a separate headless one.
       }
       const browser = await this.ensureBrowser();
+      const config = serviceRegistry.get(serviceId);
       const context = await browser.newContext({
         headless: true,
         storageState: path.join(contextDir, 'state.json'),
+        ...(config?.userAgent ? { userAgent: config.userAgent } : {}),
+        ...(config?.viewport ? { viewport: config.viewport } : {}),
       });
       active = { context, lastUsed: Date.now(), headed: false };
       this.activeContexts.set(serviceId, active);

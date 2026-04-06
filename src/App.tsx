@@ -13,6 +13,7 @@ import ShoppingPage from './components/ShoppingPage';
 import PeoplePage from './components/PeoplePage';
 import DocsPage from './components/DocsPage';
 import MemoryPage from './components/MemoryPage';
+import BrainstormPage from './components/BrainstormPage';
 import KnowledgePage from './components/KnowledgePage';
 import AgentsPage from './components/AgentsPage';
 import SystemPage from './components/SystemPage';
@@ -36,7 +37,9 @@ export default function App() {
   const [terminalOpen, setTerminalOpen] = useState(
     () => localStorage.getItem('clawquirk-panel-open') === 'true'
   );
-  const [activePage, setActivePage] = useState<PageId>('dashboard');
+  const [activePage, setActivePage] = useState<PageId>(
+    () => (localStorage.getItem('orc-active-page') as PageId) || 'dashboard'
+  );
   const [googleAuthOpen, setGoogleAuthOpen] = useState(false);
   const [financialSetupOpen, setFinancialSetupOpen] = useState(false);
   const [shoppingSetupOpen, setShoppingSetupOpen] = useState(false);
@@ -205,7 +208,7 @@ export default function App() {
         onToggleSettings={(rect) => setSettingsAnchor((prev) => prev ? null : rect)}
         theme={settings.theme}
         activePage={activePage}
-        onNavigate={setActivePage}
+        onNavigate={(page) => { setActivePage(page); localStorage.setItem('orc-active-page', page); }}
       />
       <div className="main-content">
         <div className="main-header">
@@ -230,6 +233,7 @@ export default function App() {
         {activePage === 'people' && <PeoplePage />}
         {activePage === 'docs' && <DocsPage />}
         {activePage === 'memory' && <MemoryPage />}
+        {activePage === 'brainstorm' && <BrainstormPage />}
         {activePage === 'knowledge' && <KnowledgePage />}
         {activePage === 'agents' && <AgentsPage />}
         {activePage === 'system' && <SystemPage />}

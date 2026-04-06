@@ -27,10 +27,19 @@ import { RobinhoodPlugin } from './plugins/robinhood/index.js';
 import { PlaidPlugin } from './plugins/plaid/index.js';
 import { FinancialOverviewPlugin } from './plugins/financial/index.js';
 import { SproutsPlugin } from './plugins/sprouts/index.js';
+import { CostcoPlugin } from './plugins/costco/index.js';
+import { TargetPlugin } from './plugins/target/index.js';
+import { AmazonPlugin } from './plugins/amazon/index.js';
+import { NeweggPlugin } from './plugins/newegg/index.js';
+import { ShoppingAggregatePlugin } from './plugins/shopping-aggregate/index.js';
+import { ShoppingLearningPlugin } from './plugins/shopping-learning/index.js';
+import { BrainstormPlugin } from './plugins/brainstorm/index.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerJournalRoutes } from './routes/journal.js';
 import { registerFinancialRoutes } from './routes/financial.js';
 import { registerAutomationRoutes } from './routes/automation.js';
+import { registerShoppingRoutes } from './routes/shopping.js';
+import { registerBrainstormRoutes } from './routes/brainstorm.js';
 import { browserManager } from './automation/browser-manager.js';
 import { backupKeyToDrive, restoreKeyFromDrive, hasKeyBackup, backupDbToDrive, getDbBackupInfo, restoreDbFromDrive } from './plugins/google/drive-key-backup.js';
 
@@ -65,6 +74,13 @@ const robinhoodPlugin = new RobinhoodPlugin();
 const plaidPlugin = new PlaidPlugin();
 const financialOverviewPlugin = new FinancialOverviewPlugin();
 const sproutsPlugin = new SproutsPlugin();
+const costcoPlugin = new CostcoPlugin();
+const targetPlugin = new TargetPlugin();
+const amazonPlugin = new AmazonPlugin();
+const neweggPlugin = new NeweggPlugin();
+const shoppingAggregatePlugin = new ShoppingAggregatePlugin();
+const shoppingLearningPlugin = new ShoppingLearningPlugin();
+const brainstormPlugin = new BrainstormPlugin();
 
 // --- Phase 2: Called after vault unlock — initializes DB and registers plugins ---
 let dbInitialized = false;
@@ -110,6 +126,16 @@ function onVaultUnlocked(): void {
   pluginLoader.register(plaidPlugin, pluginDeps);
   pluginLoader.register(financialOverviewPlugin, pluginDeps);
   pluginLoader.register(sproutsPlugin, pluginDeps);
+  pluginLoader.register(costcoPlugin, pluginDeps);
+  pluginLoader.register(targetPlugin, pluginDeps);
+  pluginLoader.register(amazonPlugin, pluginDeps);
+  pluginLoader.register(neweggPlugin, pluginDeps);
+  pluginLoader.register(shoppingLearningPlugin, pluginDeps);
+  pluginLoader.register(brainstormPlugin, pluginDeps);
+
+  // Aggregate plugin needs references to merchant plugins for direct method calls
+  shoppingAggregatePlugin.setMerchantPlugins([sproutsPlugin, costcoPlugin, targetPlugin, amazonPlugin, neweggPlugin]);
+  pluginLoader.register(shoppingAggregatePlugin, pluginDeps);
 
   dbInitialized = true;
   console.log('[server] Database and plugins initialized');
@@ -545,6 +571,12 @@ registerProjectRoutes(router);
 
 // --- Browser Automation API ---
 registerAutomationRoutes(router, vault);
+
+// --- Shopping API ---
+registerShoppingRoutes(router, shoppingAggregatePlugin, shoppingLearningPlugin);
+
+// --- Brainstorm API ---
+registerBrainstormRoutes(router);
 
 // --- Plugin API ---
 router.get('/api/plugins', (_req, res) => {
