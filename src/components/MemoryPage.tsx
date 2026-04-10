@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { journalApi } from '../lib/journal-api';
+import { useWorkspaceId } from '../lib/workspace-context';
 import type { JournalIndex, JournalEntry, DateCount } from '../lib/journal-api';
 
 function parseTags(tags: unknown): string[] {
@@ -11,6 +12,7 @@ function parseTags(tags: unknown): string[] {
 }
 
 export default function MemoryPage() {
+  const workspaceId = useWorkspaceId();
   const [dates, setDates] = useState<DateCount[]>([]);
   const [entries, setEntries] = useState<JournalIndex[]>([]);
   const [selectedEntry, setSelectedEntry] = useState<JournalEntry | null>(null);
@@ -21,6 +23,7 @@ export default function MemoryPage() {
   const [searchResults, setSearchResults] = useState<JournalIndex[] | null>(null);
 
   const fetchSidebar = useCallback(() => {
+    setLoading(true);
     Promise.all([journalApi.dates(), journalApi.list()])
       .then(([d, e]) => {
         setDates(d.dates);
@@ -30,7 +33,13 @@ export default function MemoryPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { fetchSidebar(); }, [fetchSidebar]);
+  // Refetch on workspace switch; clear selected entry which may belong to a different workspace
+  useEffect(() => {
+    setSelectedEntry(null);
+    setSearchQuery('');
+    setSearchResults(null);
+    fetchSidebar();
+  }, [workspaceId, fetchSidebar]);
 
   const selectEntry = async (id: string) => {
     const entry = await journalApi.get(id);

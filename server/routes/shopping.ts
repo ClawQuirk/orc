@@ -4,6 +4,7 @@ import type { ShoppingAggregatePlugin } from '../plugins/shopping-aggregate/inde
 import type { ShoppingLearningPlugin } from '../plugins/shopping-learning/index.js';
 import { browserManager } from '../automation/browser-manager.js';
 import { serviceRegistry } from '../automation/service-registry.js';
+import { getWorkspaceId } from './workspace-helper.js';
 
 const SHOPPING_MERCHANTS = ['sprouts', 'costco', 'target', 'amazon', 'newegg'];
 
@@ -60,14 +61,15 @@ export function registerShoppingRoutes(
     }
   });
 
-  // Get recent learnings or search learnings
-  router.get('/api/shopping/learnings', async (_req, res) => {
-    const params = getQueryParams(_req);
+  // Get recent learnings or search learnings (scoped by workspace)
+  router.get('/api/shopping/learnings', async (req, res) => {
+    const wsId = getWorkspaceId(req);
+    const params = getQueryParams(req);
     const query = params.get('q');
     try {
       const learnings = query
-        ? await learningPlugin.recall(query, 10)
-        : await learningPlugin.recent(10);
+        ? await learningPlugin.recall(query, 10, wsId)
+        : await learningPlugin.recent(10, wsId);
       sendJson(res, 200, { learnings });
     } catch (err: any) {
       sendJson(res, 500, { error: err.message });

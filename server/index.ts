@@ -34,12 +34,14 @@ import { NeweggPlugin } from './plugins/newegg/index.js';
 import { ShoppingAggregatePlugin } from './plugins/shopping-aggregate/index.js';
 import { ShoppingLearningPlugin } from './plugins/shopping-learning/index.js';
 import { BrainstormPlugin } from './plugins/brainstorm/index.js';
+import { WorkspacesPlugin } from './plugins/workspaces/index.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerJournalRoutes } from './routes/journal.js';
 import { registerFinancialRoutes } from './routes/financial.js';
 import { registerAutomationRoutes } from './routes/automation.js';
 import { registerShoppingRoutes } from './routes/shopping.js';
 import { registerBrainstormRoutes } from './routes/brainstorm.js';
+import { registerWorkspaceRoutes } from './routes/workspaces.js';
 import { browserManager } from './automation/browser-manager.js';
 import { backupKeyToDrive, restoreKeyFromDrive, hasKeyBackup, backupDbToDrive, getDbBackupInfo, restoreDbFromDrive } from './plugins/google/drive-key-backup.js';
 
@@ -81,6 +83,7 @@ const neweggPlugin = new NeweggPlugin();
 const shoppingAggregatePlugin = new ShoppingAggregatePlugin();
 const shoppingLearningPlugin = new ShoppingLearningPlugin();
 const brainstormPlugin = new BrainstormPlugin();
+const workspacesPlugin = new WorkspacesPlugin();
 
 // --- Phase 2: Called after vault unlock — initializes DB and registers plugins ---
 let dbInitialized = false;
@@ -132,6 +135,7 @@ function onVaultUnlocked(): void {
   pluginLoader.register(neweggPlugin, pluginDeps);
   pluginLoader.register(shoppingLearningPlugin, pluginDeps);
   pluginLoader.register(brainstormPlugin, pluginDeps);
+  pluginLoader.register(workspacesPlugin, pluginDeps);
 
   // Aggregate plugin needs references to merchant plugins for direct method calls
   shoppingAggregatePlugin.setMerchantPlugins([sproutsPlugin, costcoPlugin, targetPlugin, amazonPlugin, neweggPlugin]);
@@ -577,6 +581,9 @@ registerShoppingRoutes(router, shoppingAggregatePlugin, shoppingLearningPlugin);
 
 // --- Brainstorm API ---
 registerBrainstormRoutes(router);
+
+// --- Workspaces API ---
+registerWorkspaceRoutes(router);
 
 // --- Plugin API ---
 router.get('/api/plugins', (_req, res) => {

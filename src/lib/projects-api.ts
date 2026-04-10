@@ -61,52 +61,54 @@ export interface ProjectDetail extends Project {
   recommendations: Recommendation[];
 }
 
+import { apiFetch } from './api-client';
+
 const json = (r: Response) => r.json();
 const headers = { 'Content-Type': 'application/json' };
 
 export const projectsApi = {
   list: (status?: string): Promise<{ projects: Project[] }> =>
-    fetch(`/api/projects${status ? `?status=${status}` : ''}`).then(json),
+    apiFetch(`/api/projects${status ? `?status=${status}` : ''}`).then(json),
 
   get: (id: string): Promise<ProjectDetail> =>
-    fetch(`/api/projects/${id}`).then(json),
+    apiFetch(`/api/projects/${id}`).then(json),
 
   create: (data: { name: string; summary?: string; effort_estimate?: string }): Promise<Project> =>
-    fetch('/api/projects', { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
+    apiFetch('/api/projects', { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
 
   update: (id: string, data: Partial<Project>): Promise<void> =>
-    fetch(`/api/projects/${id}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
+    apiFetch(`/api/projects/${id}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
 
   remove: (id: string): Promise<void> =>
-    fetch(`/api/projects/${id}`, { method: 'DELETE' }).then(() => {}),
+    apiFetch(`/api/projects/${id}`, { method: 'DELETE' }).then(() => {}),
 
   addEpic: (projectId: string, data: { title: string; description?: string; effort_estimate?: string }): Promise<{ id: string }> =>
-    fetch(`/api/projects/${projectId}/epics`, { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
+    apiFetch(`/api/projects/${projectId}/epics`, { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
 
   updateEpic: (projectId: string, epicId: string, data: Partial<Epic>): Promise<void> =>
-    fetch(`/api/projects/${projectId}/epics/${epicId}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
+    apiFetch(`/api/projects/${projectId}/epics/${epicId}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
 
   removeEpic: (projectId: string, epicId: string): Promise<void> =>
-    fetch(`/api/projects/${projectId}/epics/${epicId}`, { method: 'DELETE' }).then(() => {}),
+    apiFetch(`/api/projects/${projectId}/epics/${epicId}`, { method: 'DELETE' }).then(() => {}),
 
   addTask: (projectId: string, data: { epicId: string; title: string; description?: string; effort_estimate?: string }): Promise<{ id: string }> =>
-    fetch(`/api/projects/${projectId}/tasks`, { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
+    apiFetch(`/api/projects/${projectId}/tasks`, { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
 
   updateTask: (projectId: string, taskId: string, data: Partial<Task>): Promise<void> =>
-    fetch(`/api/projects/${projectId}/tasks/${taskId}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
+    apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
 
   removeTask: (projectId: string, taskId: string): Promise<void> =>
-    fetch(`/api/projects/${projectId}/tasks/${taskId}`, { method: 'DELETE' }).then(() => {}),
+    apiFetch(`/api/projects/${projectId}/tasks/${taskId}`, { method: 'DELETE' }).then(() => {}),
 
   addMeeting: (projectId: string, calendarEventId: string, label?: string): Promise<{ id: string }> =>
-    fetch(`/api/projects/${projectId}/meetings`, { method: 'POST', headers, body: JSON.stringify({ calendarEventId, label }) }).then(json),
+    apiFetch(`/api/projects/${projectId}/meetings`, { method: 'POST', headers, body: JSON.stringify({ calendarEventId, label }) }).then(json),
 
   removeMeeting: (projectId: string, meetingId: string): Promise<void> =>
-    fetch(`/api/projects/${projectId}/meetings/${meetingId}`, { method: 'DELETE' }).then(() => {}),
+    apiFetch(`/api/projects/${projectId}/meetings/${meetingId}`, { method: 'DELETE' }).then(() => {}),
 
   addRecommendation: (projectId: string, text: string): Promise<{ id: string }> =>
-    fetch(`/api/projects/${projectId}/recommendations`, { method: 'POST', headers, body: JSON.stringify({ text }) }).then(json),
+    apiFetch(`/api/projects/${projectId}/recommendations`, { method: 'POST', headers, body: JSON.stringify({ text }) }).then(json),
 
   updateRecommendation: (projectId: string, recId: string, status: 'accepted' | 'declined'): Promise<void> =>
-    fetch(`/api/projects/${projectId}/recommendations/${recId}`, { method: 'PUT', headers, body: JSON.stringify({ status }) }).then(() => {}),
+    apiFetch(`/api/projects/${projectId}/recommendations/${recId}`, { method: 'PUT', headers, body: JSON.stringify({ status }) }).then(() => {}),
 };

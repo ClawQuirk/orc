@@ -3,22 +3,41 @@ import type { Router } from '../router.js';
 import { sendJson, readJsonBody, getQueryParams } from '../router.js';
 import { getDatabase } from '../db/index.js';
 import { regenerateProjectMarkdown, deleteProjectMarkdown } from '../projects/markdown-gen.js';
+import { getWorkspaceId } from './workspace-helper.js';
 
 export function registerProjectRoutes(router: Router): void {
   const db = () => getDatabase();
   const now = () => new Date().toISOString();
 
+  // Verify a project belongs to the current workspace; returns true if ok,
+  // otherwise writes a 404 response and returns false.
+  function ownsProject(req: any, res: any, projectId: string): boolean {
+    const wsId = getWorkspaceId(req);
+    const row = db()
+      .prepare('SELECT workspace_id FROM projects WHERE id = ?')
+      .get(projectId) as { workspace_id: string } | undefined;
+    if (!row || row.workspace_id !== wsId) {
+      sendJson(res, 404, { error: 'Project not found' });
+      return false;
+    }
+    return true;
+  }
+
   // --- Projects CRUD ---
   router.get('/api/projects', (req, res) => {
+    const wsId = getWorkspaceId(req);
     const params = getQueryParams(req);
     const status = params.get('status');
     let rows;
     if (status) {
-      rows = db().prepare('SELECT * FROM projects WHERE status = ? ORDER BY updated_at DESC').all(status);
+      rows = db()
+        .prepare('SELECT * FROM projects WHERE workspace_id = ? AND status = ? ORDER BY updated_at DESC')
+        .all(wsId, status);
     } else {
-      rows = db().prepare('SELECT * FROM projects ORDER BY updated_at DESC').all();
+      rows = db()
+        .prepare('SELECT * FROM projects WHERE workspace_id = ? ORDER BY updated_at DESC')
+        .all(wsId);
     }
-    // Attach epic counts
     const projects = (rows as any[]).map((p) => {
       const epicCount = (db().prepare('SELECT COUNT(*) as c FROM epics WHERE project_id = ?').get(p.id) as any).c;
       const taskCount = (db().prepare('SELECT COUNT(*) as c FROM tasks WHERE project_id = ?').get(p.id) as any).c;
@@ -29,6 +48,7 @@ export function registerProjectRoutes(router: Router): void {
   });
 
   router.post('/api/projects', async (req, res) => {
+    const wsId = getWorkspaceId(req);
     const body = await readJsonBody<{ name: string; summary?: string; effort_estimate?: string }>(req);
     if (!body.name?.trim()) {
       sendJson(res, 400, { error: 'Project name required' });
@@ -37,15 +57,18 @@ export function registerProjectRoutes(router: Router): void {
     const id = randomUUID();
     const ts = now();
     db().prepare(
-      'INSERT INTO projects (id, name, summary, effort_estimate, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(id, body.name.trim(), body.summary?.trim() || null, body.effort_estimate?.trim() || null, ts, ts);
+      'INSERT INTO projects (id, workspace_id, name, summary, effort_estimate, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(id, wsId, body.name.trim(), body.summary?.trim() || null, body.effort_estimate?.trim() || null, ts, ts);
     regenerateProjectMarkdown(id);
     const project = db().prepare('SELECT * FROM projects WHERE id = ?').get(id);
     sendJson(res, 201, project);
   });
 
-  router.get('/api/projects/:id', (_req, res, params) => {
-    const project = db().prepare('SELECT * FROM projects WHERE id = ?').get(params.id) as any;
+  router.get('/api/projects/:id', (req, res, params) => {
+    const wsId = getWorkspaceId(req);
+    const project = db()
+      .prepare('SELECT * FROM projects WHERE id = ? AND workspace_id = ?')
+      .get(params.id, wsId) as any;
     if (!project) { sendJson(res, 404, { error: 'Not found' }); return; }
     project.google_links = JSON.parse(project.google_links || '[]');
 
@@ -54,7 +77,6 @@ export function registerProjectRoutes(router: Router): void {
     const meetings = db().prepare('SELECT * FROM project_meetings WHERE project_id = ?').all(params.id);
     const recommendations = db().prepare('SELECT * FROM project_recommendations WHERE project_id = ? ORDER BY created_at').all(params.id);
 
-    // Nest tasks under epics
     const tasksByEpic = new Map<string, any[]>();
     for (const t of tasks) {
       const list = tasksByEpic.get(t.epic_id) ?? [];
@@ -69,6 +91,7 @@ export function registerProjectRoutes(router: Router): void {
   });
 
   router.put('/api/projects/:id', async (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     const body = await readJsonBody<Record<string, unknown>>(req);
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -93,7 +116,8 @@ export function registerProjectRoutes(router: Router): void {
     sendJson(res, 200, { success: true });
   });
 
-  router.delete('/api/projects/:id', (_req, res, params) => {
+  router.delete('/api/projects/:id', (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     db().prepare('DELETE FROM projects WHERE id = ?').run(params.id);
     deleteProjectMarkdown(params.id);
     sendJson(res, 200, { success: true });
@@ -101,6 +125,7 @@ export function registerProjectRoutes(router: Router): void {
 
   // --- Epics ---
   router.post('/api/projects/:id/epics', async (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     const body = await readJsonBody<{ title: string; description?: string; effort_estimate?: string }>(req);
     if (!body.title?.trim()) { sendJson(res, 400, { error: 'Title required' }); return; }
     const id = randomUUID();
@@ -114,6 +139,7 @@ export function registerProjectRoutes(router: Router): void {
   });
 
   router.put('/api/projects/:id/epics/:epicId', async (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     const body = await readJsonBody<Record<string, unknown>>(req);
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -129,7 +155,8 @@ export function registerProjectRoutes(router: Router): void {
     sendJson(res, 200, { success: true });
   });
 
-  router.delete('/api/projects/:id/epics/:epicId', (_req, res, params) => {
+  router.delete('/api/projects/:id/epics/:epicId', (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     db().prepare('DELETE FROM epics WHERE id = ?').run(params.epicId);
     db().prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(now(), params.id);
     regenerateProjectMarkdown(params.id);
@@ -138,6 +165,7 @@ export function registerProjectRoutes(router: Router): void {
 
   // --- Tasks ---
   router.post('/api/projects/:id/tasks', async (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     const body = await readJsonBody<{ epicId: string; title: string; description?: string; effort_estimate?: string }>(req);
     if (!body.epicId || !body.title?.trim()) { sendJson(res, 400, { error: 'epicId and title required' }); return; }
     const id = randomUUID();
@@ -151,6 +179,7 @@ export function registerProjectRoutes(router: Router): void {
   });
 
   router.put('/api/projects/:id/tasks/:taskId', async (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     const body = await readJsonBody<Record<string, unknown>>(req);
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -166,7 +195,8 @@ export function registerProjectRoutes(router: Router): void {
     sendJson(res, 200, { success: true });
   });
 
-  router.delete('/api/projects/:id/tasks/:taskId', (_req, res, params) => {
+  router.delete('/api/projects/:id/tasks/:taskId', (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     db().prepare('DELETE FROM tasks WHERE id = ?').run(params.taskId);
     db().prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(now(), params.id);
     regenerateProjectMarkdown(params.id);
@@ -175,6 +205,7 @@ export function registerProjectRoutes(router: Router): void {
 
   // --- Meetings ---
   router.post('/api/projects/:id/meetings', async (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     const body = await readJsonBody<{ calendarEventId: string; label?: string }>(req);
     if (!body.calendarEventId) { sendJson(res, 400, { error: 'calendarEventId required' }); return; }
     const id = randomUUID();
@@ -191,7 +222,8 @@ export function registerProjectRoutes(router: Router): void {
     sendJson(res, 201, { id });
   });
 
-  router.delete('/api/projects/:id/meetings/:meetingId', (_req, res, params) => {
+  router.delete('/api/projects/:id/meetings/:meetingId', (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     db().prepare('DELETE FROM project_meetings WHERE id = ?').run(params.meetingId);
     db().prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(now(), params.id);
     regenerateProjectMarkdown(params.id);
@@ -200,6 +232,7 @@ export function registerProjectRoutes(router: Router): void {
 
   // --- Recommendations ---
   router.post('/api/projects/:id/recommendations', async (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     const body = await readJsonBody<{ text: string }>(req);
     if (!body.text?.trim()) { sendJson(res, 400, { error: 'text required' }); return; }
     const id = randomUUID();
@@ -212,6 +245,7 @@ export function registerProjectRoutes(router: Router): void {
   });
 
   router.put('/api/projects/:id/recommendations/:recId', async (req, res, params) => {
+    if (!ownsProject(req, res, params.id)) return;
     const body = await readJsonBody<{ status: 'accepted' | 'declined' }>(req);
     if (!body.status || !['accepted', 'declined'].includes(body.status)) {
       sendJson(res, 400, { error: 'status must be accepted or declined' });

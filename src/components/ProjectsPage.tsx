@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { projectsApi } from '../lib/projects-api';
+import { useWorkspaceId } from '../lib/workspace-context';
 import type { Project } from '../lib/projects-api';
 import ProjectDetail from './ProjectDetail';
 
 export default function ProjectsPage() {
+  const workspaceId = useWorkspaceId();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -11,13 +13,18 @@ export default function ProjectsPage() {
   const [newName, setNewName] = useState('');
 
   const fetchProjects = useCallback(() => {
+    setLoading(true);
     projectsApi.list()
       .then((data) => setProjects(data.projects))
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
-  useEffect(() => { fetchProjects(); }, [fetchProjects]);
+  // Refetch on workspace switch and clear any selected project (it may not belong to the new workspace)
+  useEffect(() => {
+    setSelectedId(null);
+    fetchProjects();
+  }, [workspaceId, fetchProjects]);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;

@@ -18,6 +18,13 @@ const manifest: PluginManifest = {
   connection: 'local',
 };
 
+const WORKSPACE_PROP = {
+  workspaceId: {
+    type: 'string',
+    description: 'Workspace ID to scope the operation. Defaults to "home" if omitted.',
+  },
+};
+
 const tools: PluginToolDefinition[] = [
   {
     name: 'projects_list',
@@ -25,6 +32,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         status: { type: 'string', description: 'Filter by status (active, paused, completed, archived). Omit for all.' },
       },
     },
@@ -35,6 +43,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         projectId: { type: 'string', description: 'Project ID' },
       },
       required: ['projectId'],
@@ -42,10 +51,11 @@ const tools: PluginToolDefinition[] = [
   },
   {
     name: 'projects_create',
-    description: 'Create a new project.',
+    description: 'Create a new project in the given workspace.',
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         name: { type: 'string', description: 'Project name' },
         summary: { type: 'string', description: 'Project summary (optional)' },
         effort_estimate: { type: 'string', description: 'Effort estimate, e.g. "3 weeks" (optional)' },
@@ -59,6 +69,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         projectId: { type: 'string', description: 'Project ID' },
         title: { type: 'string', description: 'Epic title' },
         description: { type: 'string', description: 'Epic description (optional)' },
@@ -73,6 +84,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         projectId: { type: 'string', description: 'Project ID' },
         epicId: { type: 'string', description: 'Epic ID to add the task to' },
         title: { type: 'string', description: 'Task title' },
@@ -87,6 +99,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         projectId: { type: 'string', description: 'Project ID' },
         epicId: { type: 'string', description: 'Epic ID (if updating an epic or to identify context)' },
         taskId: { type: 'string', description: 'Task ID (if updating a task)' },
@@ -101,6 +114,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         projectId: { type: 'string', description: 'Project ID' },
         text: { type: 'string', description: 'Recommendation text' },
       },
@@ -123,14 +137,21 @@ export class ProjectsPlugin implements ServerPlugin {
     if (!this.db) return { content: [{ type: 'text', text: 'Database not initialized' }], isError: true };
     const db = this.db;
     const now = () => new Date().toISOString();
+    const wsId = (args.workspaceId as string) || 'home';
+
+    // Guard: verify a project belongs to the current workspace for scoped ops
+    const ownsProject = (projectId: string): boolean => {
+      const row = db.prepare('SELECT workspace_id FROM projects WHERE id = ?').get(projectId) as any;
+      return row && row.workspace_id === wsId;
+    };
 
     try {
       switch (toolName) {
         case 'projects_list': {
           const status = args.status as string | undefined;
           const rows = status
-            ? db.prepare('SELECT * FROM projects WHERE status = ? ORDER BY updated_at DESC').all(status)
-            : db.prepare('SELECT * FROM projects ORDER BY updated_at DESC').all();
+            ? db.prepare('SELECT * FROM projects WHERE workspace_id = ? AND status = ? ORDER BY updated_at DESC').all(wsId, status)
+            : db.prepare('SELECT * FROM projects WHERE workspace_id = ? ORDER BY updated_at DESC').all(wsId);
           const projects = (rows as any[]).map((p) => {
             const epicCount = (db.prepare('SELECT COUNT(*) as c FROM epics WHERE project_id = ?').get(p.id) as any).c;
             const taskCount = (db.prepare('SELECT COUNT(*) as c FROM tasks WHERE project_id = ?').get(p.id) as any).c;
@@ -141,6 +162,9 @@ export class ProjectsPlugin implements ServerPlugin {
         }
 
         case 'projects_get': {
+          if (!ownsProject(args.projectId as string)) {
+            return { content: [{ type: 'text', text: 'Project not found in this workspace.' }], isError: true };
+          }
           const mdPath = getProjectMarkdownPath(args.projectId as string);
           if (!existsSync(mdPath)) {
             regenerateProjectMarkdown(args.projectId as string);
@@ -154,13 +178,16 @@ export class ProjectsPlugin implements ServerPlugin {
         case 'projects_create': {
           const id = randomUUID();
           const ts = now();
-          db.prepare('INSERT INTO projects (id, name, summary, effort_estimate, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
-            .run(id, args.name, (args.summary as string) || null, (args.effort_estimate as string) || null, ts, ts);
+          db.prepare('INSERT INTO projects (id, workspace_id, name, summary, effort_estimate, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+            .run(id, wsId, args.name, (args.summary as string) || null, (args.effort_estimate as string) || null, ts, ts);
           regenerateProjectMarkdown(id);
           return { content: [{ type: 'text', text: `Project created: "${args.name}" [ID: ${id}]` }] };
         }
 
         case 'projects_add_epic': {
+          if (!ownsProject(args.projectId as string)) {
+            return { content: [{ type: 'text', text: 'Project not found in this workspace.' }], isError: true };
+          }
           const id = randomUUID();
           const maxOrder = (db.prepare('SELECT MAX(sort_order) as m FROM epics WHERE project_id = ?').get(args.projectId) as any)?.m ?? -1;
           db.prepare('INSERT INTO epics (id, project_id, title, description, effort_estimate, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
@@ -171,6 +198,9 @@ export class ProjectsPlugin implements ServerPlugin {
         }
 
         case 'projects_add_task': {
+          if (!ownsProject(args.projectId as string)) {
+            return { content: [{ type: 'text', text: 'Project not found in this workspace.' }], isError: true };
+          }
           const id = randomUUID();
           const maxOrder = (db.prepare('SELECT MAX(sort_order) as m FROM tasks WHERE epic_id = ?').get(args.epicId) as any)?.m ?? -1;
           db.prepare('INSERT INTO tasks (id, epic_id, project_id, title, effort_estimate, sort_order) VALUES (?, ?, ?, ?, ?, ?)')
@@ -182,6 +212,9 @@ export class ProjectsPlugin implements ServerPlugin {
 
         case 'projects_update_status': {
           const { projectId, epicId, taskId, status } = args as Record<string, string>;
+          if (!ownsProject(projectId)) {
+            return { content: [{ type: 'text', text: 'Project not found in this workspace.' }], isError: true };
+          }
           if (taskId) {
             db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?').run(status, now(), taskId);
           } else if (epicId) {
@@ -194,6 +227,9 @@ export class ProjectsPlugin implements ServerPlugin {
         }
 
         case 'projects_recommend': {
+          if (!ownsProject(args.projectId as string)) {
+            return { content: [{ type: 'text', text: 'Project not found in this workspace.' }], isError: true };
+          }
           const id = randomUUID();
           db.prepare('INSERT INTO project_recommendations (id, project_id, text) VALUES (?, ?, ?)')
             .run(id, args.projectId, args.text);

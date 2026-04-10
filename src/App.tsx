@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { eventBus } from './lib/event-bus';
 import { getSettings, saveSettings, XTERM_THEMES } from './lib/settings';
 import type { ClawQuirkSettings, ShellInfo } from './lib/settings';
+import { WorkspaceProvider, useWorkspace } from './lib/workspace-context';
+import { HOME_WORKSPACE_ID } from '../shared/workspace-types';
 import Sidebar from './components/Sidebar';
 import type { PageId } from './components/Sidebar';
 import SettingsPanel from './components/SettingsPanel';
@@ -16,7 +18,8 @@ import MemoryPage from './components/MemoryPage';
 import BrainstormPage from './components/BrainstormPage';
 import KnowledgePage from './components/KnowledgePage';
 import AgentsPage from './components/AgentsPage';
-import SystemPage from './components/SystemPage';
+import BusinessPage from './components/BusinessPage';
+import BusinessCreateModal from './components/BusinessCreateModal';
 import VaultUnlock from './components/VaultUnlock';
 import GoogleAuthSetup from './components/GoogleAuthSetup';
 import FinancialSetup from './components/FinancialSetup';
@@ -33,21 +36,32 @@ interface PinnedWidget {
   settings: Record<string, unknown>;
 }
 
+const VALID_PAGES: PageId[] = [
+  'dashboard',
+  'projects',
+  'planning',
+  'actions',
+  'shopping',
+  'people',
+  'docs',
+  'memory',
+  'brainstorm',
+  'knowledge',
+  'agents',
+  'business',
+];
+
+function readInitialPage(): PageId {
+  const stored = localStorage.getItem('orc-active-page');
+  if (stored && (VALID_PAGES as string[]).includes(stored)) {
+    return stored as PageId;
+  }
+  if (stored) localStorage.removeItem('orc-active-page');
+  return 'dashboard';
+}
+
 export default function App() {
-  const [terminalOpen, setTerminalOpen] = useState(
-    () => localStorage.getItem('clawquirk-panel-open') === 'true'
-  );
-  const [activePage, setActivePage] = useState<PageId>(
-    () => (localStorage.getItem('orc-active-page') as PageId) || 'dashboard'
-  );
-  const [googleAuthOpen, setGoogleAuthOpen] = useState(false);
-  const [financialSetupOpen, setFinancialSetupOpen] = useState(false);
-  const [shoppingSetupOpen, setShoppingSetupOpen] = useState(false);
-  const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null);
-  const [settings, setSettings] = useState(getSettings);
-  const [availableShells, setAvailableShells] = useState<ShellInfo[]>([]);
   const [vaultStatus, setVaultStatus] = useState<VaultStatus | null>(null);
-  const [pinnedWidgets, setPinnedWidgets] = useState<PinnedWidget[]>([]);
 
   // Check vault status on mount
   useEffect(() => {
@@ -57,7 +71,6 @@ export default function App() {
         .then((r) => r.json())
         .then((status: VaultStatus) => setVaultStatus(status))
         .catch(() => {
-          // Server may not be up yet — retry up to 10 times (10s total)
           if (retries < 10) {
             retries++;
             setTimeout(checkVault, 1000);
@@ -67,19 +80,6 @@ export default function App() {
         });
     };
     checkVault();
-  }, []);
-
-  useEffect(() => {
-    fetch('/api/shells')
-      .then((r) => r.json())
-      .then((shells: ShellInfo[]) => setAvailableShells(shells))
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    const onVisible = (open: boolean) => setTerminalOpen(open);
-    eventBus.on('terminal:visible', onVisible);
-    return () => eventBus.off('terminal:visible', onVisible);
   }, []);
 
   const vaultLocked = vaultStatus !== null && !vaultStatus.unlocked;
@@ -97,6 +97,93 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [vaultLocked]);
+
+  // Hide terminal panel during vault unlock (security)
+  useEffect(() => {
+    const layout = document.getElementById('app-layout');
+    const terminal = document.getElementById('vue-terminal');
+    if (vaultLocked) {
+      terminal?.classList.add('vault-locked');
+      layout?.classList.remove('terminal-open');
+      eventBus.emit('terminal:lock');
+    } else {
+      terminal?.classList.remove('vault-locked');
+      eventBus.emit('terminal:unlock');
+      if (terminal?.classList.contains('open')) {
+        layout?.classList.add('terminal-open');
+      }
+    }
+  }, [vaultLocked]);
+
+  const handleVaultUnlocked = useCallback(() => {
+    setVaultStatus({ exists: true, unlocked: true });
+  }, []);
+
+  if (vaultLocked) {
+    return (
+      <div className="main-panel" style={{ justifyContent: 'center', alignItems: 'center' }}>
+        <VaultUnlock
+          vaultExists={vaultStatus!.exists}
+          onUnlocked={handleVaultUnlocked}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <WorkspaceProvider enabled={vaultStatus?.unlocked === true}>
+      <UnlockedApp setVaultStatus={setVaultStatus} />
+    </WorkspaceProvider>
+  );
+}
+
+interface UnlockedAppProps {
+  setVaultStatus: (s: VaultStatus) => void;
+}
+
+function UnlockedApp({ setVaultStatus }: UnlockedAppProps) {
+  const { activeWorkspaceId, setActiveWorkspace, workspaces } = useWorkspace();
+  const [settings, setSettings] = useState(getSettings);
+  const [terminalOpen, setTerminalOpen] = useState(
+    () => localStorage.getItem('clawquirk-panel-open') === 'true'
+  );
+  const [activePage, setActivePage] = useState<PageId>(readInitialPage);
+  const [googleAuthOpen, setGoogleAuthOpen] = useState(false);
+  const [financialSetupOpen, setFinancialSetupOpen] = useState(false);
+  const [shoppingSetupOpen, setShoppingSetupOpen] = useState(false);
+  const [businessCreateOpen, setBusinessCreateOpen] = useState(false);
+  const [settingsAnchor, setSettingsAnchor] = useState<DOMRect | null>(null);
+  const [availableShells, setAvailableShells] = useState<ShellInfo[]>([]);
+  const [pinnedWidgets, setPinnedWidgets] = useState<PinnedWidget[]>([]);
+
+  useEffect(() => {
+    fetch('/api/shells')
+      .then((r) => r.json())
+      .then((shells: ShellInfo[]) => setAvailableShells(shells))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const onVisible = (open: boolean) => setTerminalOpen(open);
+    eventBus.on('terminal:visible', onVisible);
+    return () => eventBus.off('terminal:visible', onVisible);
+  }, []);
+
+  // Reset pinned widgets when workspace changes (in-memory only; not persisted)
+  useEffect(() => {
+    setPinnedWidgets([]);
+  }, [activeWorkspaceId]);
+
+  // If active workspace vanishes (archived/deleted), fall back to Home + Dashboard
+  useEffect(() => {
+    if (workspaces.length === 0) return;
+    const exists = workspaces.some((w) => w.id === activeWorkspaceId);
+    if (!exists) {
+      setActiveWorkspace(HOME_WORKSPACE_ID);
+      setActivePage('dashboard');
+      localStorage.setItem('orc-active-page', 'dashboard');
+    }
+  }, [workspaces, activeWorkspaceId, setActiveWorkspace]);
 
   const toggleTerminal = () => {
     eventBus.emit('terminal:toggle');
@@ -138,10 +225,6 @@ export default function App() {
     }
   }, [settings]);
 
-  const handleVaultUnlocked = useCallback(() => {
-    setVaultStatus({ exists: true, unlocked: true });
-  }, []);
-
   const handleUnpinWidget = useCallback((widgetId: string) => {
     setPinnedWidgets((prev) => prev.filter((w) => w.widgetId !== widgetId));
   }, []);
@@ -157,58 +240,43 @@ export default function App() {
     []
   );
 
-  // Hide terminal panel during vault unlock (security: prevent brute-force via terminal)
-  useEffect(() => {
-    const layout = document.getElementById('app-layout');
-    const terminal = document.getElementById('vue-terminal');
-    if (vaultLocked) {
-      // Hide terminal panel and remove layout margin so vault screen is centered
-      terminal?.classList.add('vault-locked');
-      layout?.classList.remove('terminal-open');
-      // SECURITY: Disable terminal input to prevent password leakage and exploit attempts
-      eventBus.emit('terminal:lock');
-    } else {
-      terminal?.classList.remove('vault-locked');
-      // Re-enable terminal input
-      eventBus.emit('terminal:unlock');
-      // Restore layout margin if terminal was open before lock
-      if (terminal?.classList.contains('open')) {
-        layout?.classList.add('terminal-open');
-      }
-    }
-  }, [vaultLocked]);
-
-  // Show vault unlock screen if vault exists but is locked
-  if (vaultLocked) {
-    return (
-      <div className="main-panel" style={{ justifyContent: 'center', alignItems: 'center' }}>
-        <VaultUnlock
-          vaultExists={vaultStatus!.exists}
-          onUnlocked={handleVaultUnlocked}
-        />
-      </div>
-    );
-  }
-
   const handleLockVault = () => {
     fetch('/api/vault/lock', { method: 'POST' })
       .then(() => setVaultStatus({ exists: true, unlocked: false }))
       .catch(() => {});
   };
 
+  const handleNavigate = useCallback((workspaceId: string, page: PageId) => {
+    setActiveWorkspace(workspaceId);
+    setActivePage(page);
+    localStorage.setItem('orc-active-page', page);
+  }, [setActiveWorkspace]);
+
+  const handleBusinessCreated = useCallback((newId: string) => {
+    setBusinessCreateOpen(false);
+    setActiveWorkspace(newId);
+    setActivePage('business');
+    localStorage.setItem('orc-active-page', 'business');
+  }, [setActiveWorkspace]);
+
+  const handleBusinessDeleted = useCallback(() => {
+    setActiveWorkspace(HOME_WORKSPACE_ID);
+    setActivePage('dashboard');
+    localStorage.setItem('orc-active-page', 'dashboard');
+  }, [setActiveWorkspace]);
+
   return (
     <div className="main-panel">
       <Sidebar
-        onOpenGoogleAuth={() => setGoogleAuthOpen(true)}
-        onOpenFinancialSetup={() => setFinancialSetupOpen(true)}
-        onOpenShoppingSetup={() => setShoppingSetupOpen(true)}
         onToggleTheme={toggleTheme}
         onOpenFolder={openProjectFolder}
         onLockVault={handleLockVault}
         onToggleSettings={(rect) => setSettingsAnchor((prev) => prev ? null : rect)}
+        onNewBusiness={() => setBusinessCreateOpen(true)}
         theme={settings.theme}
+        activeWorkspaceId={activeWorkspaceId}
         activePage={activePage}
-        onNavigate={(page) => { setActivePage(page); localStorage.setItem('orc-active-page', page); }}
+        onNavigate={handleNavigate}
       />
       <div className="main-content">
         <div className="main-header">
@@ -236,7 +304,13 @@ export default function App() {
         {activePage === 'brainstorm' && <BrainstormPage />}
         {activePage === 'knowledge' && <KnowledgePage />}
         {activePage === 'agents' && <AgentsPage />}
-        {activePage === 'system' && <SystemPage />}
+        {activePage === 'business' && (
+          <BusinessPage
+            workspaceId={activeWorkspaceId}
+            onNavigatePage={(p) => handleNavigate(activeWorkspaceId, p as PageId)}
+            onDeleted={handleBusinessDeleted}
+          />
+        )}
       </div>
 
       {settingsAnchor && (
@@ -246,6 +320,9 @@ export default function App() {
           onClose={() => setSettingsAnchor(null)}
           availableShells={availableShells}
           anchorRect={settingsAnchor}
+          onOpenGoogleAuth={() => { setSettingsAnchor(null); setGoogleAuthOpen(true); }}
+          onOpenFinancialSetup={() => { setSettingsAnchor(null); setFinancialSetupOpen(true); }}
+          onOpenShoppingSetup={() => { setSettingsAnchor(null); setShoppingSetupOpen(true); }}
         />
       )}
 
@@ -259,6 +336,13 @@ export default function App() {
 
       {shoppingSetupOpen && (
         <ShoppingSetup onClose={() => setShoppingSetupOpen(false)} />
+      )}
+
+      {businessCreateOpen && (
+        <BusinessCreateModal
+          onClose={() => setBusinessCreateOpen(false)}
+          onCreated={handleBusinessCreated}
+        />
       )}
     </div>
   );

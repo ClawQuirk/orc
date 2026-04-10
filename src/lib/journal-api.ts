@@ -23,12 +23,14 @@ export interface SearchResult extends JournalSummary {
   snippet: string;
 }
 
+import { apiFetch } from './api-client';
+
 const json = (r: Response) => r.json();
 const headers = { 'Content-Type': 'application/json' };
 
 export const journalApi = {
   dates: (): Promise<{ dates: DateCount[] }> =>
-    fetch('/api/journal/dates').then(json),
+    apiFetch('/api/journal/dates').then(json),
 
   list: (params?: { from?: string; to?: string; tag?: string; source?: string }): Promise<{ entries: JournalIndex[] }> => {
     const qs = new URLSearchParams();
@@ -36,28 +38,28 @@ export const journalApi = {
     if (params?.to) qs.set('to', params.to);
     if (params?.tag) qs.set('tag', params.tag);
     if (params?.source) qs.set('source', params.source);
-    return fetch(`/api/journal?${qs}`).then(json);
+    return apiFetch(`/api/journal?${qs}`).then(json);
   },
 
   summaries: (params?: { from?: string; to?: string }): Promise<{ entries: JournalSummary[] }> => {
     const qs = new URLSearchParams();
     if (params?.from) qs.set('from', params.from);
     if (params?.to) qs.set('to', params.to);
-    return fetch(`/api/journal/summaries?${qs}`).then(json);
+    return apiFetch(`/api/journal/summaries?${qs}`).then(json);
   },
 
   get: (id: string): Promise<JournalEntry> =>
-    fetch(`/api/journal/${id}`).then(json),
+    apiFetch(`/api/journal/${id}`).then(json),
 
   create: (data: { title: string; content: string; date?: string; tags?: string[]; summary?: string; source?: string; mood?: string }): Promise<{ id: string }> =>
-    fetch('/api/journal', { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
+    apiFetch('/api/journal', { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
 
   update: (id: string, data: Partial<JournalEntry>): Promise<void> =>
-    fetch(`/api/journal/${id}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
+    apiFetch(`/api/journal/${id}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
 
   remove: (id: string): Promise<void> =>
-    fetch(`/api/journal/${id}`, { method: 'DELETE' }).then(() => {}),
+    apiFetch(`/api/journal/${id}`, { method: 'DELETE' }).then(() => {}),
 
   search: (q: string, limit?: number): Promise<{ entries: SearchResult[] }> =>
-    fetch(`/api/journal/search?q=${encodeURIComponent(q)}&limit=${limit || 20}`).then(json),
+    apiFetch(`/api/journal/search?q=${encodeURIComponent(q)}&limit=${limit || 20}`).then(json),
 };

@@ -16,6 +16,7 @@ interface ProjectRow {
   google_links: string;
   effort_estimate: string | null;
   updated_at: string;
+  workspace_id: string;
 }
 
 interface EpicRow {
@@ -61,6 +62,11 @@ export function regenerateProjectMarkdown(projectId: string): void {
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as ProjectRow | undefined;
   if (!project) return;
 
+  const workspace = db
+    .prepare('SELECT name FROM workspaces WHERE id = ?')
+    .get(project.workspace_id) as { name: string } | undefined;
+  const workspaceName = workspace?.name ?? project.workspace_id;
+
   const epics = db.prepare(
     'SELECT * FROM epics WHERE project_id = ? ORDER BY sort_order, created_at'
   ).all(projectId) as EpicRow[];
@@ -92,9 +98,19 @@ export function regenerateProjectMarkdown(projectId: string): void {
 
   const lines: string[] = [];
 
+  // YAML frontmatter for LLM file context
+  lines.push('---');
+  lines.push(`id: ${project.id}`);
+  lines.push(`workspace_id: ${project.workspace_id}`);
+  lines.push(`workspace: ${workspaceName}`);
+  lines.push(`status: ${project.status}`);
+  lines.push('---');
+  lines.push('');
+
   lines.push(`# ${project.name}`);
   lines.push('');
   const meta: string[] = [];
+  meta.push(`**Workspace:** ${workspaceName}`);
   meta.push(`**Status:** ${project.status}`);
   if (project.effort_estimate) meta.push(`**Effort:** ${project.effort_estimate}`);
   lines.push(meta.join(' | '));

@@ -46,49 +46,51 @@ export interface BoardWithElements extends BrainstormBoard {
   edges: BrainstormEdge[];
 }
 
+import { apiFetch } from './api-client';
+
 const json = (r: Response) => r.json();
 const headers = { 'Content-Type': 'application/json' };
 
 export const brainstormApi = {
   listBoards: (status?: string): Promise<{ boards: BrainstormBoard[] }> =>
-    fetch(`/api/brainstorm/boards${status ? `?status=${status}` : ''}`).then(json),
+    apiFetch(`/api/brainstorm/boards${status ? `?status=${status}` : ''}`).then(json),
 
   getBoard: (id: string): Promise<BoardWithElements> =>
-    fetch(`/api/brainstorm/boards/${id}`).then(json),
+    apiFetch(`/api/brainstorm/boards/${id}`).then(json),
 
   createBoard: (name: string): Promise<BrainstormBoard> =>
-    fetch('/api/brainstorm/boards', { method: 'POST', headers, body: JSON.stringify({ name }) }).then(json),
+    apiFetch('/api/brainstorm/boards', { method: 'POST', headers, body: JSON.stringify({ name }) }).then(json),
 
   updateBoard: (id: string, data: Partial<BrainstormBoard>): Promise<void> =>
-    fetch(`/api/brainstorm/boards/${id}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
+    apiFetch(`/api/brainstorm/boards/${id}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
 
   deleteBoard: (id: string): Promise<void> =>
-    fetch(`/api/brainstorm/boards/${id}`, { method: 'DELETE' }).then(() => {}),
+    apiFetch(`/api/brainstorm/boards/${id}`, { method: 'DELETE' }).then(() => {}),
 
   duplicateBoard: (id: string): Promise<{ id: string; name: string }> =>
-    fetch(`/api/brainstorm/boards/${id}/duplicate`, { method: 'POST' }).then(json),
+    apiFetch(`/api/brainstorm/boards/${id}/duplicate`, { method: 'POST' }).then(json),
 
   createNode: (boardId: string, data: { position_x: number; position_y: number; width?: number; height?: number; data?: Partial<BrainstormNodeData> }): Promise<{ id: string }> =>
-    fetch(`/api/brainstorm/boards/${boardId}/nodes`, { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
+    apiFetch(`/api/brainstorm/boards/${boardId}/nodes`, { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
 
   updateNode: (boardId: string, nodeId: string, data: Record<string, unknown>): Promise<void> =>
-    fetch(`/api/brainstorm/boards/${boardId}/nodes/${nodeId}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
+    apiFetch(`/api/brainstorm/boards/${boardId}/nodes/${nodeId}`, { method: 'PUT', headers, body: JSON.stringify(data) }).then(() => {}),
 
   deleteNode: (boardId: string, nodeId: string): Promise<void> =>
-    fetch(`/api/brainstorm/boards/${boardId}/nodes/${nodeId}`, { method: 'DELETE' }).then(() => {}),
+    apiFetch(`/api/brainstorm/boards/${boardId}/nodes/${nodeId}`, { method: 'DELETE' }).then(() => {}),
 
   batchUpdateNodes: (boardId: string, nodes: Array<Record<string, unknown>>): Promise<void> =>
-    fetch(`/api/brainstorm/boards/${boardId}/nodes/batch`, { method: 'PUT', headers, body: JSON.stringify({ nodes }) }).then(() => {}),
+    apiFetch(`/api/brainstorm/boards/${boardId}/nodes/batch`, { method: 'PUT', headers, body: JSON.stringify({ nodes }) }).then(() => {}),
 
   createEdge: (boardId: string, data: { source: string; target: string; source_handle?: string; target_handle?: string; type?: string; label?: string }): Promise<{ id: string }> =>
-    fetch(`/api/brainstorm/boards/${boardId}/edges`, { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
+    apiFetch(`/api/brainstorm/boards/${boardId}/edges`, { method: 'POST', headers, body: JSON.stringify(data) }).then(json),
 
   deleteEdge: (boardId: string, edgeId: string): Promise<void> =>
-    fetch(`/api/brainstorm/boards/${boardId}/edges/${edgeId}`, { method: 'DELETE' }).then(() => {}),
+    apiFetch(`/api/brainstorm/boards/${boardId}/edges/${edgeId}`, { method: 'DELETE' }).then(() => {}),
 
   batchCreateEdges: (boardId: string, edges: Array<{ source: string; target: string; source_handle?: string; target_handle?: string; type?: string; label?: string }>): Promise<{ ids: string[] }> =>
-    fetch(`/api/brainstorm/boards/${boardId}/edges/batch`, { method: 'POST', headers, body: JSON.stringify({ edges }) }).then(json),
+    apiFetch(`/api/brainstorm/boards/${boardId}/edges/batch`, { method: 'POST', headers, body: JSON.stringify({ edges }) }).then(json),
 
   batchDeleteEdges: (boardId: string, ids: string[]): Promise<void> =>
-    fetch(`/api/brainstorm/boards/${boardId}/edges/batch`, { method: 'DELETE', headers, body: JSON.stringify({ ids }) }).then(() => {}),
+    apiFetch(`/api/brainstorm/boards/${boardId}/edges/batch`, { method: 'DELETE', headers, body: JSON.stringify({ ids }) }).then(() => {}),
 };

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { pluginRegistry } from '../plugins/registry';
 import DashboardWidget from './DashboardWidget';
+import { apiFetch } from '../lib/api-client';
+import { useWorkspaceId } from '../lib/workspace-context';
 import type { Project } from '../lib/projects-api';
 import type { JournalSummary } from '../lib/journal-api';
 
@@ -53,7 +55,8 @@ function UpcomingEvents() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch('/api/calendar/upcoming?maxResults=6')
+    // Calendar is a global Google-synced resource; same across all workspaces.
+    apiFetch('/api/calendar/upcoming?maxResults=6')
       .then((r) => { if (!r.ok) throw new Error('Not connected'); return r.json(); })
       .then((data) => setEvents(data.events ?? []))
       .catch((err) => setError(err.message))
@@ -78,16 +81,18 @@ function UpcomingEvents() {
 }
 
 function ActiveProjects() {
+  const workspaceId = useWorkspaceId();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/projects?status=active')
+    setLoading(true);
+    apiFetch('/api/projects?status=active')
       .then((r) => r.json())
       .then((data) => setProjects(data.projects ?? []))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [workspaceId]);
 
   if (loading) return <div className="dash-card-loading">Loading...</div>;
   if (!projects.length) return <div className="dash-card-empty">No active projects</div>;
@@ -119,16 +124,18 @@ function ActiveProjects() {
 }
 
 function RecentJournal() {
+  const workspaceId = useWorkspaceId();
   const [entries, setEntries] = useState<JournalSummary[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/journal/summaries?limit=5')
+    setLoading(true);
+    apiFetch('/api/journal/summaries?limit=5')
       .then((r) => r.json())
       .then((data) => setEntries(data.entries ?? []))
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [workspaceId]);
 
   if (loading) return <div className="dash-card-loading">Loading...</div>;
   if (!entries.length) return <div className="dash-card-empty">No journal entries</div>;

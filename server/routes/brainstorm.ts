@@ -2,28 +2,46 @@ import { randomUUID } from 'node:crypto';
 import type { Router } from '../router.js';
 import { sendJson, readJsonBody, getQueryParams } from '../router.js';
 import { getDatabase } from '../db/index.js';
+import { getWorkspaceId } from './workspace-helper.js';
 
 export function registerBrainstormRoutes(router: Router): void {
   const db = () => getDatabase();
   const now = () => new Date().toISOString();
 
+  // Verify a board belongs to the current workspace; 404 if not
+  function ownsBoard(req: any, res: any, boardId: string): boolean {
+    const wsId = getWorkspaceId(req);
+    const row = db()
+      .prepare('SELECT workspace_id FROM brainstorm_boards WHERE id = ?')
+      .get(boardId) as { workspace_id: string } | undefined;
+    if (!row || row.workspace_id !== wsId) {
+      sendJson(res, 404, { error: 'Board not found' });
+      return false;
+    }
+    return true;
+  }
+
   // --- Boards ---
 
   // List boards (optional ?status=active|archived)
   router.get('/api/brainstorm/boards', (req, res) => {
+    const wsId = getWorkspaceId(req);
     const params = getQueryParams(req);
     const status = params.get('status');
-    let sql = 'SELECT * FROM brainstorm_boards';
-    const binds: unknown[] = [];
-    if (status) { sql += ' WHERE status = ?'; binds.push(status); }
+    let sql = 'SELECT * FROM brainstorm_boards WHERE workspace_id = ?';
+    const binds: unknown[] = [wsId];
+    if (status) { sql += ' AND status = ?'; binds.push(status); }
     sql += ' ORDER BY sort_order, created_at';
     const boards = db().prepare(sql).all(...binds);
     sendJson(res, 200, { boards });
   });
 
   // Get board with all nodes + edges
-  router.get('/api/brainstorm/boards/:id', (_req, res, params) => {
-    const board = db().prepare('SELECT * FROM brainstorm_boards WHERE id = ?').get(params.id);
+  router.get('/api/brainstorm/boards/:id', (req, res, params) => {
+    const wsId = getWorkspaceId(req);
+    const board = db()
+      .prepare('SELECT * FROM brainstorm_boards WHERE id = ? AND workspace_id = ?')
+      .get(params.id, wsId);
     if (!board) { sendJson(res, 404, { error: 'Board not found' }); return; }
     const nodes = db().prepare('SELECT * FROM brainstorm_nodes WHERE board_id = ?').all(params.id);
     const edges = db().prepare('SELECT * FROM brainstorm_edges WHERE board_id = ?').all(params.id);
@@ -32,20 +50,24 @@ export function registerBrainstormRoutes(router: Router): void {
 
   // Create board
   router.post('/api/brainstorm/boards', async (req, res) => {
+    const wsId = getWorkspaceId(req);
     const body = await readJsonBody<{ name: string }>(req);
     if (!body.name?.trim()) { sendJson(res, 400, { error: 'name required' }); return; }
     const id = randomUUID();
-    const maxOrder = db().prepare('SELECT MAX(sort_order) as m FROM brainstorm_boards').get() as any;
+    const maxOrder = db()
+      .prepare('SELECT MAX(sort_order) as m FROM brainstorm_boards WHERE workspace_id = ?')
+      .get(wsId) as any;
     const sortOrder = (maxOrder?.m ?? -1) + 1;
     const ts = now();
     db().prepare(
-      'INSERT INTO brainstorm_boards (id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
-    ).run(id, body.name.trim(), sortOrder, ts, ts);
+      'INSERT INTO brainstorm_boards (id, workspace_id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(id, wsId, body.name.trim(), sortOrder, ts, ts);
     sendJson(res, 201, { id, name: body.name.trim(), status: 'active', sort_order: sortOrder, created_at: ts, updated_at: ts });
   });
 
   // Update board (partial: name, status, sort_order)
   router.put('/api/brainstorm/boards/:id', async (req, res, params) => {
+    if (!ownsBoard(req, res, params.id)) return;
     const body = await readJsonBody<Record<string, unknown>>(req);
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -61,18 +83,23 @@ export function registerBrainstormRoutes(router: Router): void {
   });
 
   // Delete board (CASCADE handles nodes/edges)
-  router.delete('/api/brainstorm/boards/:id', (_req, res, params) => {
+  router.delete('/api/brainstorm/boards/:id', (req, res, params) => {
+    if (!ownsBoard(req, res, params.id)) return;
     db().prepare('DELETE FROM brainstorm_boards WHERE id = ?').run(params.id);
     sendJson(res, 200, { success: true });
   });
 
   // Duplicate board (deep copy with new UUIDs)
-  router.post('/api/brainstorm/boards/:id/duplicate', async (_req, res, params) => {
+  router.post('/api/brainstorm/boards/:id/duplicate', async (req, res, params) => {
+    if (!ownsBoard(req, res, params.id)) return;
+    const wsId = getWorkspaceId(req);
     const board = db().prepare('SELECT * FROM brainstorm_boards WHERE id = ?').get(params.id) as any;
     if (!board) { sendJson(res, 404, { error: 'Board not found' }); return; }
 
     const newBoardId = randomUUID();
-    const maxOrder = db().prepare('SELECT MAX(sort_order) as m FROM brainstorm_boards').get() as any;
+    const maxOrder = db()
+      .prepare('SELECT MAX(sort_order) as m FROM brainstorm_boards WHERE workspace_id = ?')
+      .get(wsId) as any;
     const sortOrder = (maxOrder?.m ?? -1) + 1;
     const ts = now();
 
@@ -85,8 +112,8 @@ export function registerBrainstormRoutes(router: Router): void {
 
     db().transaction(() => {
       db().prepare(
-        'INSERT INTO brainstorm_boards (id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
-      ).run(newBoardId, `${board.name} (copy)`, sortOrder, ts, ts);
+        'INSERT INTO brainstorm_boards (id, workspace_id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(newBoardId, wsId, `${board.name} (copy)`, sortOrder, ts, ts);
 
       const insertNode = db().prepare(
         'INSERT INTO brainstorm_nodes (id, board_id, type, position_x, position_y, width, height, data, style, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
@@ -114,6 +141,7 @@ export function registerBrainstormRoutes(router: Router): void {
 
   // Create node
   router.post('/api/brainstorm/boards/:boardId/nodes', async (req, res, params) => {
+    if (!ownsBoard(req, res, params.boardId)) return;
     const body = await readJsonBody<{ type?: string; position_x: number; position_y: number; width?: number; height?: number; data?: object }>(req);
     const id = randomUUID();
     const ts = now();
@@ -124,7 +152,8 @@ export function registerBrainstormRoutes(router: Router): void {
   });
 
   // Batch update nodes (for drag-stop + paste) — MUST be before :id route
-  router.put('/api/brainstorm/boards/:boardId/nodes/batch', async (req, res) => {
+  router.put('/api/brainstorm/boards/:boardId/nodes/batch', async (req, res, params) => {
+    if (!ownsBoard(req, res, params.boardId)) return;
     const body = await readJsonBody<{ nodes: Array<Record<string, unknown>> }>(req);
     if (!body.nodes?.length) { sendJson(res, 400, { error: 'nodes array required' }); return; }
     const ts = now();
@@ -149,6 +178,7 @@ export function registerBrainstormRoutes(router: Router): void {
 
   // Update node (partial)
   router.put('/api/brainstorm/boards/:boardId/nodes/:id', async (req, res, params) => {
+    if (!ownsBoard(req, res, params.boardId)) return;
     const body = await readJsonBody<Record<string, unknown>>(req);
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -166,7 +196,8 @@ export function registerBrainstormRoutes(router: Router): void {
   });
 
   // Delete node (CASCADE deletes connected edges)
-  router.delete('/api/brainstorm/boards/:boardId/nodes/:id', (_req, res, params) => {
+  router.delete('/api/brainstorm/boards/:boardId/nodes/:id', (req, res, params) => {
+    if (!ownsBoard(req, res, params.boardId)) return;
     db().prepare('DELETE FROM brainstorm_nodes WHERE id = ?').run(params.id);
     sendJson(res, 200, { success: true });
   });
@@ -175,6 +206,7 @@ export function registerBrainstormRoutes(router: Router): void {
 
   // Create edge
   router.post('/api/brainstorm/boards/:boardId/edges', async (req, res, params) => {
+    if (!ownsBoard(req, res, params.boardId)) return;
     const body = await readJsonBody<{ source: string; target: string; source_handle?: string; target_handle?: string; type?: string; label?: string }>(req);
     if (!body.source || !body.target) { sendJson(res, 400, { error: 'source and target required' }); return; }
     const id = randomUUID();
@@ -186,6 +218,7 @@ export function registerBrainstormRoutes(router: Router): void {
 
   // Batch create edges (for paste) — MUST be before :id route
   router.post('/api/brainstorm/boards/:boardId/edges/batch', async (req, res, params) => {
+    if (!ownsBoard(req, res, params.boardId)) return;
     const body = await readJsonBody<{ edges: Array<{ source: string; target: string; source_handle?: string; target_handle?: string; type?: string; label?: string }> }>(req);
     if (!body.edges?.length) { sendJson(res, 400, { error: 'edges array required' }); return; }
     const ts = now();
@@ -204,7 +237,8 @@ export function registerBrainstormRoutes(router: Router): void {
   });
 
   // Batch delete edges — MUST be before :id route
-  router.delete('/api/brainstorm/boards/:boardId/edges/batch', async (req, res) => {
+  router.delete('/api/brainstorm/boards/:boardId/edges/batch', async (req, res, params) => {
+    if (!ownsBoard(req, res, params.boardId)) return;
     const body = await readJsonBody<{ ids: string[] }>(req);
     if (!body.ids?.length) { sendJson(res, 400, { error: 'ids array required' }); return; }
     db().transaction(() => {
@@ -215,7 +249,8 @@ export function registerBrainstormRoutes(router: Router): void {
   });
 
   // Delete edge
-  router.delete('/api/brainstorm/boards/:boardId/edges/:id', (_req, res, params) => {
+  router.delete('/api/brainstorm/boards/:boardId/edges/:id', (req, res, params) => {
+    if (!ownsBoard(req, res, params.boardId)) return;
     db().prepare('DELETE FROM brainstorm_edges WHERE id = ?').run(params.id);
     sendJson(res, 200, { success: true });
   });

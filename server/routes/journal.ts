@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { Router } from '../router.js';
 import { sendJson, readJsonBody, getQueryParams } from '../router.js';
 import { getDatabase } from '../db/index.js';
+import { getWorkspaceId } from './workspace-helper.js';
 
 function autoSummary(content: string): string {
   const clean = content.replace(/[#*_`\[\]]/g, '').trim();
@@ -22,24 +23,29 @@ export function registerJournalRoutes(router: Router): void {
   const db = () => getDatabase();
   const now = () => new Date().toISOString();
 
+  // NOTE: literal paths like /dates, /summaries, /search must register
+  // BEFORE parameterized /:id routes to avoid shadowing.
+
   // Distinct dates with entry counts (for sidebar)
-  router.get('/api/journal/dates', (_req, res) => {
+  router.get('/api/journal/dates', (req, res) => {
+    const wsId = getWorkspaceId(req);
     const rows = db().prepare(
-      `SELECT date, COUNT(*) as count FROM journal_entries GROUP BY date ORDER BY date DESC`
-    ).all();
+      `SELECT date, COUNT(*) as count FROM journal_entries WHERE workspace_id = ? GROUP BY date ORDER BY date DESC`
+    ).all(wsId);
     sendJson(res, 200, { dates: rows });
   });
 
   // List entries — Tier 1 (index: id, date, title, tags, source)
   router.get('/api/journal', (req, res) => {
+    const wsId = getWorkspaceId(req);
     const params = getQueryParams(req);
     const from = params.get('from');
     const to = params.get('to');
     const tag = params.get('tag');
     const source = params.get('source');
 
-    let sql = 'SELECT id, date, title, tags, source, mood, created_at FROM journal_entries WHERE 1=1';
-    const binds: unknown[] = [];
+    let sql = 'SELECT id, date, title, tags, source, mood, created_at FROM journal_entries WHERE workspace_id = ?';
+    const binds: unknown[] = [wsId];
 
     if (from) { sql += ' AND date >= ?'; binds.push(from); }
     if (to) { sql += ' AND date <= ?'; binds.push(to); }
@@ -48,7 +54,6 @@ export function registerJournalRoutes(router: Router): void {
 
     let entries = db().prepare(sql).all(...binds) as any[];
 
-    // Parse tags JSON and filter by tag if needed (handle double-encoded strings)
     entries = entries.map((e) => {
       let tags = JSON.parse(e.tags || '[]');
       if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch {} }
@@ -63,12 +68,13 @@ export function registerJournalRoutes(router: Router): void {
 
   // List entries — Tier 2 (adds summary)
   router.get('/api/journal/summaries', (req, res) => {
+    const wsId = getWorkspaceId(req);
     const params = getQueryParams(req);
     const from = params.get('from');
     const to = params.get('to');
 
-    let sql = 'SELECT id, date, title, summary, tags, source, mood, created_at FROM journal_entries WHERE 1=1';
-    const binds: unknown[] = [];
+    let sql = 'SELECT id, date, title, summary, tags, source, mood, created_at FROM journal_entries WHERE workspace_id = ?';
+    const binds: unknown[] = [wsId];
     if (from) { sql += ' AND date >= ?'; binds.push(from); }
     if (to) { sql += ' AND date <= ?'; binds.push(to); }
     sql += ' ORDER BY date DESC, created_at DESC';
@@ -79,9 +85,36 @@ export function registerJournalRoutes(router: Router): void {
     });
   });
 
+  // FTS5 search — returns Tier 2 with snippets (MUST be before /:id)
+  router.get('/api/journal/search', (req, res) => {
+    const wsId = getWorkspaceId(req);
+    const params = getQueryParams(req);
+    const q = params.get('q');
+    const limit = Math.min(parseInt(params.get('limit') || '20', 10), 50);
+
+    if (!q) { sendJson(res, 400, { error: 'q parameter required' }); return; }
+
+    const rows = db().prepare(`
+      SELECT je.id, je.date, je.title, je.summary, je.tags, je.source, je.mood,
+             snippet(journal_fts, 2, '<mark>', '</mark>', '...', 40) as snippet
+      FROM journal_fts
+      JOIN journal_entries je ON je.rowid = journal_fts.rowid
+      WHERE journal_fts MATCH ? AND je.workspace_id = ?
+      ORDER BY rank
+      LIMIT ?
+    `).all(q, wsId, limit) as any[];
+
+    sendJson(res, 200, {
+      entries: rows.map((r) => ({ ...r, tags: JSON.parse(r.tags || '[]') })),
+    });
+  });
+
   // Get full entry — Tier 3
-  router.get('/api/journal/:id', (_req, res, params) => {
-    const entry = db().prepare('SELECT * FROM journal_entries WHERE id = ?').get(params.id) as any;
+  router.get('/api/journal/:id', (req, res, params) => {
+    const wsId = getWorkspaceId(req);
+    const entry = db()
+      .prepare('SELECT * FROM journal_entries WHERE id = ? AND workspace_id = ?')
+      .get(params.id, wsId) as any;
     if (!entry) { sendJson(res, 404, { error: 'Not found' }); return; }
     entry.tags = JSON.parse(entry.tags || '[]');
     sendJson(res, 200, entry);
@@ -89,6 +122,7 @@ export function registerJournalRoutes(router: Router): void {
 
   // Create entry
   router.post('/api/journal', async (req, res) => {
+    const wsId = getWorkspaceId(req);
     const body = await readJsonBody<{
       date?: string;
       title: string;
@@ -112,15 +146,24 @@ export function registerJournalRoutes(router: Router): void {
     const source = body.source || 'manual';
 
     db().prepare(
-      `INSERT INTO journal_entries (id, date, title, summary, content, tags, source, mood, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(id, date, body.title.trim(), summary, body.content.trim(), tags, source, body.mood || null, ts, ts);
+      `INSERT INTO journal_entries (id, workspace_id, date, title, summary, content, tags, source, mood, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(id, wsId, date, body.title.trim(), summary, body.content.trim(), tags, source, body.mood || null, ts, ts);
 
     sendJson(res, 201, { id, date, title: body.title.trim(), summary });
   });
 
   // Update entry
   router.put('/api/journal/:id', async (req, res, params) => {
+    const wsId = getWorkspaceId(req);
+    const owner = db()
+      .prepare('SELECT workspace_id FROM journal_entries WHERE id = ?')
+      .get(params.id) as { workspace_id: string } | undefined;
+    if (!owner || owner.workspace_id !== wsId) {
+      sendJson(res, 404, { error: 'Not found' });
+      return;
+    }
+
     const body = await readJsonBody<Record<string, unknown>>(req);
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -136,7 +179,6 @@ export function registerJournalRoutes(router: Router): void {
       fields.push('summary = ?');
       values.push(body.summary);
     } else if ('content' in body && typeof body.content === 'string') {
-      // Auto-regenerate summary when content changes
       fields.push('summary = ?');
       values.push(autoSummary(body.content));
     }
@@ -151,31 +193,16 @@ export function registerJournalRoutes(router: Router): void {
   });
 
   // Delete entry
-  router.delete('/api/journal/:id', (_req, res, params) => {
+  router.delete('/api/journal/:id', (req, res, params) => {
+    const wsId = getWorkspaceId(req);
+    const owner = db()
+      .prepare('SELECT workspace_id FROM journal_entries WHERE id = ?')
+      .get(params.id) as { workspace_id: string } | undefined;
+    if (!owner || owner.workspace_id !== wsId) {
+      sendJson(res, 404, { error: 'Not found' });
+      return;
+    }
     db().prepare('DELETE FROM journal_entries WHERE id = ?').run(params.id);
     sendJson(res, 200, { success: true });
-  });
-
-  // FTS5 search — returns Tier 2 with snippets
-  router.get('/api/journal/search', (req, res) => {
-    const params = getQueryParams(req);
-    const q = params.get('q');
-    const limit = Math.min(parseInt(params.get('limit') || '20', 10), 50);
-
-    if (!q) { sendJson(res, 400, { error: 'q parameter required' }); return; }
-
-    const rows = db().prepare(`
-      SELECT je.id, je.date, je.title, je.summary, je.tags, je.source, je.mood,
-             snippet(journal_fts, 2, '<mark>', '</mark>', '...', 40) as snippet
-      FROM journal_fts
-      JOIN journal_entries je ON je.rowid = journal_fts.rowid
-      WHERE journal_fts MATCH ?
-      ORDER BY rank
-      LIMIT ?
-    `).all(q, limit) as any[];
-
-    sendJson(res, 200, {
-      entries: rows.map((r) => ({ ...r, tags: JSON.parse(r.tags || '[]') })),
-    });
   });
 }

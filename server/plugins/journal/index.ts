@@ -16,6 +16,13 @@ const manifest: PluginManifest = {
   connection: 'local',
 };
 
+const WORKSPACE_PROP = {
+  workspaceId: {
+    type: 'string',
+    description: 'Workspace ID to scope the operation. Defaults to "home" if omitted.',
+  },
+};
+
 const tools: PluginToolDefinition[] = [
   {
     name: 'journal_index',
@@ -23,6 +30,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         days: { type: 'number', description: 'Number of days to look back (default 7)' },
         from: { type: 'string', description: 'Start date (YYYY-MM-DD). Overrides days.' },
         to: { type: 'string', description: 'End date (YYYY-MM-DD).' },
@@ -35,6 +43,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         count: { type: 'number', description: 'Number of entries (default 5, max 20)' },
       },
     },
@@ -45,6 +54,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         entryId: { type: 'string', description: 'Journal entry ID' },
       },
       required: ['entryId'],
@@ -56,6 +66,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         query: { type: 'string', description: 'Search query' },
         limit: { type: 'number', description: 'Max results (default 10)' },
       },
@@ -68,6 +79,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         title: { type: 'string', description: 'Entry title (concise)' },
         content: { type: 'string', description: 'Entry content (markdown, 2-5 sentences with context and reasoning)' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Tags like ["decision", "bug-fix", "preference", "milestone", "learning"]' },
@@ -82,6 +94,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         date: { type: 'string', description: 'Date (YYYY-MM-DD). Default: today.' },
       },
     },
@@ -112,6 +125,7 @@ export class JournalPlugin implements ServerPlugin {
   async executeTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
     if (!this.db) return { content: [{ type: 'text', text: 'Database not initialized' }], isError: true };
     const db = this.db;
+    const wsId = (args.workspaceId as string) || 'home';
 
     try {
       switch (toolName) {
@@ -121,8 +135,8 @@ export class JournalPlugin implements ServerPlugin {
           const to = (args.to as string) ?? new Date().toISOString().split('T')[0];
 
           const rows = db.prepare(
-            'SELECT id, date, title, tags, source FROM journal_entries WHERE date >= ? AND date <= ? ORDER BY date DESC, created_at DESC'
-          ).all(from, to) as any[];
+            'SELECT id, date, title, tags, source FROM journal_entries WHERE workspace_id = ? AND date >= ? AND date <= ? ORDER BY date DESC, created_at DESC'
+          ).all(wsId, from, to) as any[];
 
           if (rows.length === 0) return { content: [{ type: 'text', text: `No journal entries from ${from} to ${to}.` }] };
 
@@ -137,8 +151,8 @@ export class JournalPlugin implements ServerPlugin {
         case 'journal_recent': {
           const count = Math.min((args.count as number) ?? 5, 20);
           const rows = db.prepare(
-            'SELECT id, date, title, summary, tags, source FROM journal_entries ORDER BY date DESC, created_at DESC LIMIT ?'
-          ).all(count) as any[];
+            'SELECT id, date, title, summary, tags, source FROM journal_entries WHERE workspace_id = ? ORDER BY date DESC, created_at DESC LIMIT ?'
+          ).all(wsId, count) as any[];
 
           if (rows.length === 0) return { content: [{ type: 'text', text: 'No journal entries yet.' }] };
 
@@ -151,7 +165,7 @@ export class JournalPlugin implements ServerPlugin {
         }
 
         case 'journal_read': {
-          const entry = db.prepare('SELECT * FROM journal_entries WHERE id = ?').get(args.entryId) as any;
+          const entry = db.prepare('SELECT * FROM journal_entries WHERE id = ? AND workspace_id = ?').get(args.entryId, wsId) as any;
           if (!entry) return { content: [{ type: 'text', text: 'Entry not found.' }], isError: true };
 
           const tags = JSON.parse(entry.tags || '[]').join(', ');
@@ -173,10 +187,10 @@ export class JournalPlugin implements ServerPlugin {
                    snippet(journal_fts, 2, '<mark>', '</mark>', '...', 40) as snippet
             FROM journal_fts
             JOIN journal_entries je ON je.rowid = journal_fts.rowid
-            WHERE journal_fts MATCH ?
+            WHERE journal_fts MATCH ? AND je.workspace_id = ?
             ORDER BY rank
             LIMIT ?
-          `).all(args.query, limit) as any[];
+          `).all(args.query, wsId, limit) as any[];
 
           if (rows.length === 0) return { content: [{ type: 'text', text: `No journal entries matching "${args.query}".` }] };
 
@@ -196,8 +210,8 @@ export class JournalPlugin implements ServerPlugin {
 
           // Check for existing entry with same title today (append instead of duplicate)
           const existing = db.prepare(
-            'SELECT id, content FROM journal_entries WHERE date = ? AND title = ?'
-          ).get(today, title) as any;
+            'SELECT id, content FROM journal_entries WHERE date = ? AND title = ? AND workspace_id = ?'
+          ).get(today, title, wsId) as any;
 
           if (existing) {
             const newContent = existing.content + '\n\n---\n\n' + content;
@@ -209,9 +223,9 @@ export class JournalPlugin implements ServerPlugin {
 
           const id = randomUUID();
           db.prepare(
-            `INSERT INTO journal_entries (id, date, title, summary, content, tags, source, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, 'mcp', ?, ?)`
-          ).run(id, today, title, summary, content, tags, new Date().toISOString(), new Date().toISOString());
+            `INSERT INTO journal_entries (id, workspace_id, date, title, summary, content, tags, source, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 'mcp', ?, ?)`
+          ).run(id, wsId, today, title, summary, content, tags, new Date().toISOString(), new Date().toISOString());
 
           return { content: [{ type: 'text', text: `Journal entry created: "${title}" [ID: ${id}]` }] };
         }
@@ -219,8 +233,8 @@ export class JournalPlugin implements ServerPlugin {
         case 'journal_summarize_day': {
           const date = (args.date as string) ?? new Date().toISOString().split('T')[0];
           const rows = db.prepare(
-            'SELECT title, summary, tags, source FROM journal_entries WHERE date = ? ORDER BY created_at'
-          ).all(date) as any[];
+            'SELECT title, summary, tags, source FROM journal_entries WHERE workspace_id = ? AND date = ? ORDER BY created_at'
+          ).all(wsId, date) as any[];
 
           if (rows.length === 0) return { content: [{ type: 'text', text: `No journal entries for ${date}.` }] };
 

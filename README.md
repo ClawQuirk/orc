@@ -6,6 +6,8 @@ Built on [ClawQuirk Canvas](https://github.com/ClawQuirk/clawquirk-canvas).
 
 ## Features
 
+**Workspaces** -- Organize work into separate Home and Business workspaces. Each business has its own isolated projects, journal, brainstorm boards, and dashboard. Switch instantly from the sidebar (5 MCP tools)
+
 **Google Suite Integration** -- Gmail, Calendar, Contacts, Docs, Sheets, Slides (27 MCP tools)
 
 **Financial Services** -- Stripe, PayPal, Coinbase, Robinhood, Plaid with cross-service spending aggregation (22 MCP tools)
@@ -28,7 +30,7 @@ Built on [ClawQuirk Canvas](https://github.com/ClawQuirk/clawquirk-canvas).
 
 Two services run concurrently:
 
-- **Vite frontend (React + Vue)** -- React main panel with sidebar navigation and 11 orchestration pages. Vue terminal panel runs your AI tool of choice (Claude, Aider, Ollama, etc.)
+- **Vite frontend (React + Vue)** -- React main panel with workspace-aware sidebar (Home + user-created Businesses) and orchestration pages scoped to the active workspace. Vue terminal panel runs your AI tool of choice (Claude, Aider, Ollama, etc.)
 - **Node.js backend** -- PTY manager, SQLite database (WAL mode), encrypted vault, plugin system, MCP server, and API routes
 
 The terminal _is_ the chat interface -- there is no separate chat panel. It persists across browser refreshes and server restarts.
@@ -95,7 +97,7 @@ Plugins live in `server/plugins/` and expose tools via MCP. Each plugin declares
 | Robinhood | Robinhood | 3 |
 | Plaid | Plaid | 4 |
 | Sprouts, Costco, Target, Amazon, Newegg | Shopping merchants | 5 |
-| Local | Financial Overview, Projects, Journal, Shopping Aggregate, Shopping Learning, Brainstorm | 32 |
+| Local | Workspaces, Financial Overview, Projects, Journal, Shopping Aggregate, Shopping Learning, Brainstorm | 37 |
 
 ## Security
 

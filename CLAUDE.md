@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What Is This
 
-Orc (Orchestrator) is a self-hosted, LLM-agnostic Personal Knowledge Assistant. The React main panel provides a left sidebar for navigation and Orchestration pages (Dashboard, Projects, Planning, Actions, People, Docs, Memory, Knowledge, Agents, System). The Vue-powered terminal side panel runs an AI coding tool (Claude, Aider, Ollama, etc.) that serves as the LLM "brain" connected via MCP. The terminal IS the chat interface — there is no separate chat panel. The terminal persists across browser refreshes and server restarts.
+Orc (Orchestrator) is a self-hosted, LLM-agnostic Personal Knowledge Assistant. The React main panel provides a left sidebar that organizes pages into **workspaces** — a built-in **Home** workspace for personal life and any number of user-created **Business** workspaces. Each workspace contains its own Orchestration pages (Dashboard, Projects, Planning, Actions, People, Docs, Memory, Brainstorm, Knowledge, Agents); Home additionally hosts Shopping. The Vue-powered terminal side panel runs an AI coding tool (Claude, Aider, Ollama, etc.) that serves as the LLM "brain" connected via MCP. The terminal IS the chat interface — there is no separate chat panel. The terminal persists across browser refreshes and server restarts.
 
 ## Commands
 
@@ -43,17 +43,25 @@ Vite proxies `/ws` and `/api` to the backend.
 ## UI Layout
 
 The main panel uses a horizontal flex layout:
-- **Left sidebar** (`src/components/Sidebar.tsx`, 140px) — Connections section (Google with status dot), Orchestration section (10 navigable pages), and bottom actions (Project folder, Theme, Settings, Lock vault)
-- **Main content area** — Renders the active page based on sidebar selection
+- **Left sidebar** (`src/components/Sidebar.tsx`, 140px) — Two collapsable workspace sections (Home + Businesses) with bottom actions (Project folder, Theme, Settings, Lock vault). Connections setup (Google, Financial, Merchants) and Database Backup live in the Settings popover, not the sidebar.
+- **Main content area** — Renders the active page based on sidebar selection, scoped to the active workspace
 - **Terminal panel** — Vue-managed, docks left or right, resizable
 
+**Sidebar workspace sections:**
+- **Home** (built-in, undeletable) — Dashboard, Projects, Planning, Actions, People, Docs, Memory, Brainstorm, Knowledge, Agents, **Shopping**
+- **Businesses** (user-created via inline `+` button) — same page set as Home but without Shopping. Each business row has a chevron (toggles expansion) and a clickable name (navigates to `BusinessPage` landing view). Right-click on a business row → context menu with Rename / Archive.
+
 Page components in `src/components/`:
-- `Dashboard.tsx` — Pinnable widget grid
+- `Dashboard.tsx` — Pinnable widget grid (refetches on workspace switch via `useWorkspaceId`)
 - `ProjectsPage.tsx` + `ProjectDetail.tsx` — Project list and detail with Epic/Task hierarchy, Google Drive links, recommendations
 - `PlanningPage.tsx` — Calendar events with contact context linking (birthday → contact card with soft-delete)
 - `ActionsPage.tsx` — Quick search for emails and contacts
 - `MemoryPage.tsx` — Journal with 25/75 split panel (date-grouped sidebar, markdown content viewer/editor)
-- `PeoplePage.tsx`, `DocsPage.tsx`, `KnowledgePage.tsx`, `AgentsPage.tsx`, `SystemPage.tsx` — Placeholder pages
+- `BrainstormPage.tsx` — ReactFlow infinite canvas with tabbed boards
+- `BusinessPage.tsx` — Business landing page (header, stats, quick actions, danger zone). Reached by clicking a business name in the sidebar.
+- `BusinessCreateModal.tsx` — Modal for creating new businesses (opened by sidebar `+` button)
+- `PeoplePage.tsx`, `DocsPage.tsx`, `KnowledgePage.tsx`, `AgentsPage.tsx` — Placeholder pages
+- `SettingsPanel.tsx` — Popover with terminal settings, Connections section (Google/Financial/Merchants triggers), and Database Backup section
 
 Settings panel opens as a fixed-position popover anchored to the sidebar's settings button via `DOMRect`.
 
@@ -149,6 +157,16 @@ SQLite database at `data/orc.db` with WAL mode for concurrent access.
 - `shopping_learning_fts` — FTS5 virtual table over title, content, tags with sync triggers
 - `shopping_cache` — Short-TTL result cache for cross-merchant search (UNIQUE query+merchant)
 
+**Migration 006 (brainstorm):**
+- `brainstorm_boards` — Board metadata (name, status, sort_order)
+- `brainstorm_nodes` — Nodes with position, size, JSON data (cascade-deleted with parent board)
+- `brainstorm_edges` — Connections between nodes (cascade-deleted with parent board)
+
+**Migration 007 (workspaces):**
+- `workspaces` — Workspace metadata (id, name, type discriminator `'home' | 'business'`, status, sort_order, icon, color). Seeded with a single Home row on first run.
+- Adds `workspace_id TEXT NOT NULL DEFAULT 'home'` column to `projects`, `journal_entries`, `brainstorm_boards`, `shopping_learning`. **No FK reference** — SQLite forbids combining `REFERENCES` with `NOT NULL DEFAULT` in `ALTER TABLE ADD COLUMN`. Validation happens at the application layer via `server/routes/workspace-helper.ts`.
+- Indexes on `workspace_id` for each scoped table.
+
 Migrations in `server/db/migrations/`. Run automatically on server start.
 
 ## Credential Vault
@@ -192,6 +210,9 @@ Plugins live in `server/plugins/<name>/` and implement the `ServerPlugin` interf
 - `shopping-aggregate` (toolPrefix: `shopping`, connection: `local`) — 3 tools: search, list, compare
 - `shopping-learning` (toolPrefix: `shopping`, connection: `local`) — 3 tools: learn, recall, recommend
 - `orc-brainstorm` (toolPrefix: `brainstorm`, connection: `local`) — 12 tools: boards_list, boards_get, boards_create, boards_update, boards_delete, boards_duplicate, nodes_create, nodes_update, nodes_delete, edges_create, edges_delete, edges_list
+- `orc-workspaces` (toolPrefix: `workspaces`, connection: `local`) — 5 tools: list, get, create, update, delete
+
+All scoped MCP tools (projects, journal, brainstorm, shopping_learning) accept an optional `workspaceId` argument that defaults to `'home'` when omitted. Each plugin's tool handler validates ownership before mutating data.
 
 ## MCP Server
 
@@ -274,7 +295,7 @@ Playwright-based browser automation framework in `server/automation/` for shoppi
 - `POST /api/automation/logout/:service` — Clear browser context
 - `GET /api/automation/screenshot/:service` — Latest debug screenshot
 
-**Frontend:** `ShoppingSetup.tsx` popover panel with login/logout buttons per service, status polling during login flow. Accessed via Shopping button in sidebar Connections section.
+**Frontend:** `ShoppingSetup.tsx` popover panel with login/logout buttons per service, status polling during login flow. Opened from the Settings popover's Connections section (Merchants).
 
 **Dependency:** `playwright` npm package + `npx playwright install chromium` (~400MB). Chromium is only launched on first automation API call (lazy init).
 
@@ -327,9 +348,28 @@ ReactFlow-based infinite canvas for visual concept mapping. Multiple tabbed boar
 
 **Node editing:** Double-click to edit, click-away to save (detected via `selected` prop deselection + document mousedown capture phase). Transparent borderless inputs match display styling.
 
-## Page Persistence
+## Workspaces
 
-Active page is saved to `localStorage` key `orc-active-page` and restored on refresh. Set in the `onNavigate` callback in `App.tsx`.
+Multi-workspace architecture (migration 007). The sidebar has two collapsable sections: **Home** (built-in personal workspace, undeletable, includes Shopping) and **Businesses** (user-created via inline `+` button). Each workspace owns its own projects, journal entries, brainstorm boards, and shopping learnings. Google-synced data (contacts, calendar, docs, gmail), financial data, and the vault remain global across workspaces.
+
+**Database** (migration 007): `workspaces` table with `type` discriminator (`'home' | 'business'`). Scoped tables (`projects`, `journal_entries`, `brainstorm_boards`, `shopping_learning`) gain a `workspace_id TEXT NOT NULL DEFAULT 'home'` column. **Note:** No `REFERENCES workspaces(id)` clause — SQLite forbids combining `REFERENCES` with `NOT NULL DEFAULT` in `ALTER TABLE ADD COLUMN`. Validation happens at the application layer.
+
+**Active workspace propagation:**
+- **Frontend:** `src/lib/api-client.ts` exposes `apiFetch()`, a fetch wrapper that auto-injects `X-Workspace-Id` from a module-level ref. `src/lib/workspace-context.tsx` (React `WorkspaceProvider` + `useWorkspace`/`useWorkspaceId` hooks) updates the ref on workspace switch and reads the active ID from localStorage key `orc-active-workspace`. The four resource API clients (`projects-api`, `journal-api`, `brainstorm-api`, `shopping-api`) all import `apiFetch`.
+- **Backend:** `server/routes/workspace-helper.ts` exposes `getWorkspaceId(req)` which reads the `X-Workspace-Id` header, validates against an in-memory cache of active workspace IDs, and falls back to `'home'`. Every scoped route handler calls this and applies `WHERE workspace_id = ?` to all SELECT/UPDATE/DELETE statements. Mutating routes call ownership-check guards (e.g., `ownsProject`, `ownsBoard`) at the top to prevent cross-workspace tampering.
+- **MCP plugins:** Scoped plugin tools (`orc-projects`, `orc-journal`, `orc-brainstorm`, `shopping-learning`) accept an optional `workspaceId` argument that defaults to `'home'`. The MCP stdio proxy is unchanged — `workspaceId` rides along as a normal tool argument.
+
+**Backend routes** in `server/routes/workspaces.ts` (5 endpoints): `GET /api/workspaces`, `GET /api/workspaces/:id` (with counts), `POST /api/workspaces`, `PUT /api/workspaces/:id`, `DELETE /api/workspaces/:id` (soft-delete; rejects Home).
+
+**Frontend:**
+- `src/components/BusinessPage.tsx` — Business landing page with header (editable name + description), stats grid (project/journal/board counts), quick action buttons, and danger zone (archive).
+- `src/components/BusinessCreateModal.tsx` — Modal triggered by sidebar `+` button. Creates the business and auto-navigates to the new BusinessPage.
+- `src/components/Sidebar.tsx` — Collapsable Home and Businesses sections. Business rows have separate chevron (toggle expansion) and name (navigate to BusinessPage) click targets. Right-click → context menu (Rename / Archive). Archiving the active business resets navigation to Home/dashboard.
+- `src/App.tsx` is split into outer `App` (vault state only) and inner `UnlockedApp` (workspace + page state). The `WorkspaceProvider` is mounted only after vault unlock (`enabled={vaultStatus?.unlocked === true}`).
+
+**Page persistence:** Two localStorage keys — `orc-active-workspace` (workspace ID) and `orc-active-page` (page ID). Both are sanitized on read; stale `'system'` page IDs (the System page was removed) and missing workspace IDs fall back to `'home'`/`'dashboard'`.
+
+**System page removal:** The standalone System page was removed; its database backup/restore UI and Google plugin viewer moved into the Settings popover. Settings now contains terminal preferences, a Connections section (Google/Financial/Merchants triggers), and a Database Backup section.
 
 ## Projects
 

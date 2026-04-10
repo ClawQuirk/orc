@@ -16,6 +16,13 @@ const manifest: PluginManifest = {
   connection: 'local',
 };
 
+const WORKSPACE_PROP = {
+  workspaceId: {
+    type: 'string',
+    description: 'Workspace ID to scope the operation. Defaults to "home" if omitted.',
+  },
+};
+
 const tools: PluginToolDefinition[] = [
   {
     name: 'brainstorm_boards_list',
@@ -23,6 +30,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         status: { type: 'string', enum: ['active', 'archived'], description: 'Filter by status (default: all)' },
       },
     },
@@ -33,6 +41,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         boardId: { type: 'string', description: 'Board ID' },
       },
       required: ['boardId'],
@@ -40,10 +49,11 @@ const tools: PluginToolDefinition[] = [
   },
   {
     name: 'brainstorm_boards_create',
-    description: 'Create a new brainstorm board.',
+    description: 'Create a new brainstorm board in the given workspace.',
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         name: { type: 'string', description: 'Board name' },
       },
       required: ['name'],
@@ -55,6 +65,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         boardId: { type: 'string', description: 'Board ID' },
         name: { type: 'string', description: 'New name' },
         status: { type: 'string', enum: ['active', 'archived'], description: 'New status' },
@@ -69,6 +80,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         boardId: { type: 'string', description: 'Board ID' },
       },
       required: ['boardId'],
@@ -91,6 +103,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         boardId: { type: 'string', description: 'Board ID' },
         position_x: { type: 'number', description: 'X position on canvas' },
         position_y: { type: 'number', description: 'Y position on canvas' },
@@ -115,6 +128,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         boardId: { type: 'string', description: 'Board ID' },
         nodeId: { type: 'string', description: 'Node ID' },
         position_x: { type: 'number' },
@@ -132,6 +146,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         boardId: { type: 'string', description: 'Board ID' },
         nodeId: { type: 'string', description: 'Node ID' },
       },
@@ -144,6 +159,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         boardId: { type: 'string', description: 'Board ID' },
         source: { type: 'string', description: 'Source node ID' },
         target: { type: 'string', description: 'Target node ID' },
@@ -158,6 +174,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         boardId: { type: 'string', description: 'Board ID' },
         edgeId: { type: 'string', description: 'Edge ID' },
       },
@@ -170,6 +187,7 @@ const tools: PluginToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: {
+        ...WORKSPACE_PROP,
         boardId: { type: 'string', description: 'Board ID' },
       },
       required: ['boardId'],
@@ -190,13 +208,20 @@ export class BrainstormPlugin implements ServerPlugin {
   async executeTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
     if (!this.db) return { content: [{ type: 'text', text: 'Database not initialized' }], isError: true };
     const db = this.db;
+    const wsId = (args.workspaceId as string) || 'home';
+
+    // Verify a board belongs to the current workspace
+    const ownsBoard = (boardId: string): boolean => {
+      const row = db.prepare('SELECT workspace_id FROM brainstorm_boards WHERE id = ?').get(boardId) as any;
+      return row && row.workspace_id === wsId;
+    };
 
     try {
       switch (toolName) {
         case 'brainstorm_boards_list': {
-          let sql = 'SELECT b.*, (SELECT COUNT(*) FROM brainstorm_nodes WHERE board_id = b.id) as node_count, (SELECT COUNT(*) FROM brainstorm_edges WHERE board_id = b.id) as edge_count FROM brainstorm_boards b';
-          const binds: unknown[] = [];
-          if (args.status) { sql += ' WHERE b.status = ?'; binds.push(args.status); }
+          let sql = 'SELECT b.*, (SELECT COUNT(*) FROM brainstorm_nodes WHERE board_id = b.id) as node_count, (SELECT COUNT(*) FROM brainstorm_edges WHERE board_id = b.id) as edge_count FROM brainstorm_boards b WHERE b.workspace_id = ?';
+          const binds: unknown[] = [wsId];
+          if (args.status) { sql += ' AND b.status = ?'; binds.push(args.status); }
           sql += ' ORDER BY b.sort_order, b.created_at';
           const boards = db.prepare(sql).all(...binds) as any[];
 
@@ -209,6 +234,9 @@ export class BrainstormPlugin implements ServerPlugin {
         }
 
         case 'brainstorm_boards_get': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           const board = db.prepare('SELECT * FROM brainstorm_boards WHERE id = ?').get(args.boardId) as any;
           if (!board) return { content: [{ type: 'text', text: 'Board not found.' }], isError: true };
 
@@ -237,14 +265,17 @@ export class BrainstormPlugin implements ServerPlugin {
 
         case 'brainstorm_boards_create': {
           const id = randomUUID();
-          const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM brainstorm_boards').get() as any;
+          const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM brainstorm_boards WHERE workspace_id = ?').get(wsId) as any;
           const sortOrder = (maxOrder?.m ?? -1) + 1;
           const ts = new Date().toISOString();
-          db.prepare('INSERT INTO brainstorm_boards (id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(id, args.name, sortOrder, ts, ts);
+          db.prepare('INSERT INTO brainstorm_boards (id, workspace_id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, wsId, args.name, sortOrder, ts, ts);
           return { content: [{ type: 'text', text: `Board created: "${args.name}" [ID: ${id}]` }] };
         }
 
         case 'brainstorm_boards_update': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           const fields: string[] = [];
           const values: unknown[] = [];
           if (args.name) { fields.push('name = ?'); values.push(args.name); }
@@ -259,16 +290,22 @@ export class BrainstormPlugin implements ServerPlugin {
         }
 
         case 'brainstorm_boards_delete': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           db.prepare('DELETE FROM brainstorm_boards WHERE id = ?').run(args.boardId);
           return { content: [{ type: 'text', text: 'Board deleted.' }] };
         }
 
         case 'brainstorm_boards_duplicate': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           const board = db.prepare('SELECT * FROM brainstorm_boards WHERE id = ?').get(args.boardId) as any;
           if (!board) return { content: [{ type: 'text', text: 'Board not found.' }], isError: true };
 
           const newBoardId = randomUUID();
-          const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM brainstorm_boards').get() as any;
+          const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM brainstorm_boards WHERE workspace_id = ?').get(wsId) as any;
           const sortOrder = (maxOrder?.m ?? -1) + 1;
           const ts = new Date().toISOString();
           const nodes = db.prepare('SELECT * FROM brainstorm_nodes WHERE board_id = ?').all(args.boardId) as any[];
@@ -277,7 +314,7 @@ export class BrainstormPlugin implements ServerPlugin {
           for (const n of nodes) nodeIdMap.set(n.id, randomUUID());
 
           db.transaction(() => {
-            db.prepare('INSERT INTO brainstorm_boards (id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?)').run(newBoardId, `${board.name} (copy)`, sortOrder, ts, ts);
+            db.prepare('INSERT INTO brainstorm_boards (id, workspace_id, name, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)').run(newBoardId, wsId, `${board.name} (copy)`, sortOrder, ts, ts);
             for (const n of nodes) {
               db.prepare('INSERT INTO brainstorm_nodes (id, board_id, type, position_x, position_y, width, height, data, style, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(nodeIdMap.get(n.id), newBoardId, n.type, n.position_x, n.position_y, n.width, n.height, n.data, n.style, ts, ts);
             }
@@ -293,6 +330,9 @@ export class BrainstormPlugin implements ServerPlugin {
         }
 
         case 'brainstorm_nodes_create': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           const id = randomUUID();
           const ts = new Date().toISOString();
           const data = args.data ? JSON.stringify(args.data) : '{}';
@@ -301,6 +341,9 @@ export class BrainstormPlugin implements ServerPlugin {
         }
 
         case 'brainstorm_nodes_update': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           const fields: string[] = [];
           const values: unknown[] = [];
           for (const key of ['position_x', 'position_y', 'width', 'height']) {
@@ -316,22 +359,34 @@ export class BrainstormPlugin implements ServerPlugin {
         }
 
         case 'brainstorm_nodes_delete': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           db.prepare('DELETE FROM brainstorm_nodes WHERE id = ?').run(args.nodeId);
           return { content: [{ type: 'text', text: 'Node deleted.' }] };
         }
 
         case 'brainstorm_edges_create': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           const id = randomUUID();
           db.prepare('INSERT INTO brainstorm_edges (id, board_id, source, target, label, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, args.boardId, args.source, args.target, args.label ?? null, new Date().toISOString());
           return { content: [{ type: 'text', text: `Edge created [ID: ${id}]` }] };
         }
 
         case 'brainstorm_edges_delete': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           db.prepare('DELETE FROM brainstorm_edges WHERE id = ?').run(args.edgeId);
           return { content: [{ type: 'text', text: 'Edge deleted.' }] };
         }
 
         case 'brainstorm_edges_list': {
+          if (!ownsBoard(args.boardId as string)) {
+            return { content: [{ type: 'text', text: 'Board not found in this workspace.' }], isError: true };
+          }
           const edges = db.prepare('SELECT * FROM brainstorm_edges WHERE board_id = ?').all(args.boardId) as any[];
           if (edges.length === 0) return { content: [{ type: 'text', text: 'No edges on this board.' }] };
           const text = edges.map((e) => `- ${e.source} → ${e.target}${e.label ? ` (${e.label})` : ''} [ID: ${e.id}]`).join('\n');

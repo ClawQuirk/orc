@@ -12,6 +12,7 @@ import {
 import type { Connection, Node, Edge, ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { brainstormApi } from '../lib/brainstorm-api';
+import { useWorkspaceId } from '../lib/workspace-context';
 import type { BrainstormBoard, BoardWithElements } from '../lib/brainstorm-api';
 import BrainstormNode from './BrainstormNode';
 import BrainstormTabs from './BrainstormTabs';
@@ -42,6 +43,7 @@ function dbEdgeToFlow(e: any): Edge {
 }
 
 function BrainstormPageInner() {
+  const workspaceId = useWorkspaceId();
   const [boards, setBoards] = useState<BrainstormBoard[]>([]);
   const [archivedBoards, setArchivedBoards] = useState<BrainstormBoard[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -52,8 +54,11 @@ function BrainstormPageInner() {
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
 
-  // Load boards on mount
+  // Load boards when mount or workspace changes
   useEffect(() => {
+    setActiveId(null);
+    setNodes([]);
+    setEdges([]);
     brainstormApi.listBoards().then(({ boards: all }) => {
       const active = all.filter((b) => b.status === 'active');
       const archived = all.filter((b) => b.status === 'archived');
@@ -69,7 +74,7 @@ function BrainstormPageInner() {
         });
       }
     });
-  }, []);
+  }, [workspaceId, setNodes, setEdges]);
 
   // Node data change callback (passed into custom nodes)
   const handleNodeDataChange = useCallback((nodeId: string, data: { label: string; content: string; color: string }) => {
