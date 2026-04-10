@@ -171,7 +171,7 @@ export default function MemoryPage() {
                     <span className={`journal-source-badge source-${selectedEntry.source}`}>{selectedEntry.source}</span>
                   )}
                   {selectedEntry.mood && <span className="journal-mood">{selectedEntry.mood}</span>}
-                  {selectedEntry.tags.map((tag) => (
+                  {parseTags(selectedEntry.tags).map((tag: string) => (
                     <span key={tag} className="journal-tag">{tag}</span>
                   ))}
                 </div>

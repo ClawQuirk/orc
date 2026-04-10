@@ -116,7 +116,11 @@ export function registerJournalRoutes(router: Router): void {
       .prepare('SELECT * FROM journal_entries WHERE id = ? AND workspace_id = ?')
       .get(params.id, wsId) as any;
     if (!entry) { sendJson(res, 404, { error: 'Not found' }); return; }
-    entry.tags = JSON.parse(entry.tags || '[]');
+    // Some legacy entries (created via early MCP journal_add) stored tags
+    // double-encoded as a JSON string of a JSON string. Decode twice if needed.
+    let tags = JSON.parse(entry.tags || '[]');
+    if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch { /* leave as-is */ } }
+    entry.tags = Array.isArray(tags) ? tags : [];
     sendJson(res, 200, entry);
   });
 
